@@ -3,8 +3,11 @@
 # source venv/bin/activate
 # pip install -r requirements.txt
 
-# Устанавливаем Playwright (необходимо для работы DeepSeek API)
+# Устанавливаем Playwright (необходимо для работы DeepSeek API)  (на сервере не нужно устанавливать)
 #playwright install chromium
+
+# Создаете .env с портом (на сервере, чтобы поменять порт с 8000 на 8001)
+echo "PORT=8001" > Deepseek-API/.env
 
 # ============================================
 # Основные зависимости (обязательные)

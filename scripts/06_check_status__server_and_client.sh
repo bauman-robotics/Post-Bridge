@@ -19,7 +19,7 @@ NC='\033[0m'
 # ============================================
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEEPSEEK_SERVER_PORT=8000
+DEEPSEEK_SERVER_PORT=8001
 LOG_DIR="$PROJECT_DIR/logs"
 PID_DIR="$PROJECT_DIR/pids"
 SERVER_PID_FILE="$PID_DIR/deepseek_server.pid"

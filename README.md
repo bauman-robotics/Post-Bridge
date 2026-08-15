@@ -150,7 +150,7 @@ bash
 ./scripts/05_check_status.sh --short  # Краткий вывод
 
 # Убить процесс на порту
-./scripts/02_stop_server.sh           # Порт 8000
+./scripts/02_stop_server.sh           # Порт 8001
 ./scripts/02_stop_server.sh 8080      # Другой порт
 ./scripts/02_stop_server.sh --force   # Принудительно
 
@@ -167,7 +167,7 @@ general:
   max_emails_per_check: 5           # Максимум писем за раз
 
 deepseek:
-  api_url: "http://localhost:8000"
+  api_url: "http://localhost:8001"
   model: "deepseek-chat"
   temperature: 0.7
   max_tokens: 2000

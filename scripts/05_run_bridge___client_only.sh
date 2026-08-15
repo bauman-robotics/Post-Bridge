@@ -24,7 +24,7 @@ print_header() { echo -e "${BLUE}============================================${N
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$PROJECT_DIR/venv"
 BRIDGE_SCRIPT="$PROJECT_DIR/src/email_bridge.py"
-DEEPSEEK_SERVER_PORT=8000
+DEEPSEEK_SERVER_PORT=8001
 BRIDGE_MODE="server"  # server или once
 
 LOG_DIR="$PROJECT_DIR/logs"

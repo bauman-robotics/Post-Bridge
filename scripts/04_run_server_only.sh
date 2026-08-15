@@ -24,7 +24,7 @@ print_header() { echo -e "${BLUE}============================================${N
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$PROJECT_DIR/venv"
 DEEPSEEK_API_DIR="$PROJECT_DIR/Deepseek-API"
-DEEPSEEK_SERVER_PORT=8000
+DEEPSEEK_SERVER_PORT=8001
 SERVER_STARTUP_WAIT=10
 
 LOG_DIR="$PROJECT_DIR/logs"
