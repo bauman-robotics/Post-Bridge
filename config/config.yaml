@@ -1,0 +1,124 @@
+# ============================================
+# ОСНОВНОЙ КОНФИГ (публичная часть)
+# ============================================
+
+# Общие настройки
+general:
+  mode: "server"
+  enable_email_processing: true
+  enable_batch_processing: false
+  email_check_interval: 120
+  batch_check_interval: 3600
+  max_emails_per_check: 5
+  max_batch_files: 10
+  delay_between_requests: 0.5
+
+# Настройки DeepSeek API
+deepseek:
+  api_url: "http://localhost:8000"
+  model: "deepseek-chat"
+  system_prompt: "Ты полезный помощник. Отвечай на русском языке."
+  temperature: 0.7
+  max_tokens: 2000
+  timeout: 60
+  thinking: false
+  search: false
+
+# Настройки почты (секреты вынесены в secrets.yaml)
+email:
+  # Все чувствительные данные теперь в secrets.yaml
+  check_folder: "INBOX"
+  processed_folder: "Processed"
+  error_folder: "Errors"
+  filtered_folder: "Filtered"
+  mark_as_read: true
+  delete_after_processing: false
+  delete_after_filtering: false
+  search_criteria: "UNSEEN"  # или "ALL" для теста
+  
+  # Настройки форматирования ответов
+  include_question_in_response: true
+  greeting: "Здравствуйте!"
+  response_signature: "🤖 Это автоматический ответ от DeepSeek AI."
+  response_footer: "Если у вас есть дополнительные вопросы, просто ответьте на это письмо."
+
+# ==================== НАСТРОЙКИ ОБРАБОТКИ ====================
+# processing:
+#   save_responses: true
+#   output_dir: "email_responses"
+#   json_dir: "email_responses/json"
+#   save_json: true
+#   save_md: true
+#   max_filename_length: 50
+#   delay_between_requests: 0.5
+#   include_original_email: true
+
+# Настройки пакетной обработки
+batch:
+  input_dir: "requests"
+  output_dir: "responses"
+  json_dir: "responses/json"
+  save_json: true
+  save_md: true
+  max_filename_length: 50
+  include_metadata: true
+  
+# ==================== НАСТРОЙКИ ЛОГИРОВАНИЯ ====================
+logging:
+  enabled: true
+  log_dir: "logs"
+  log_file: "deepseek_bridge.log"
+  log_to_console: true
+  log_level: "INFO"
+
+# ==================== ФИЛЬТРЫ ДЛЯ ПОЧТЫ ====================
+# Фильтры применяются к каждому письму перед обработкой.
+# Если письмо не проходит хотя бы один фильтр, оно пропускается.
+# Письма, не прошедшие фильтрацию, перемещаются в папку "Filtered" (если настроена)
+# и помечаются как прочитанные, чтобы не обрабатывать их повторно.
+
+filters:
+  # --- ФИЛЬТР ПО ТЕМЕ ПИСЬМА (ОБЯЗАТЕЛЬНЫЕ СЛОВА) ---
+  # Обрабатываются ТОЛЬКО письма, в теме которых есть хотя бы одно из этих слов.
+  # Если список пустой ([]), фильтр не применяется - все письма проходят.
+  # Регистр не важен (deepseek = DeepSeek = DEEPSEEK).
+  # Пример: ["deepseek", "вопрос", "запрос", "ai"]
+  subject_contains: ["deepseek"]
+  
+  # --- ФИЛЬТР ПО ТЕМЕ ПИСЬМА (ЗАПРЕЩЕННЫЕ СЛОВА) ---
+  # Письма, в теме которых есть любое из этих слов, НЕ обрабатываются.
+  # Полезно для отсеивания спама, рекламы, автоматических уведомлений.
+  # Регистр не важен.
+  # Пример: ["spam", "реклама", "рассылка", "unsubscribe"]
+  subject_not_contains: ["spam", "реклама"]
+  
+  # --- ФИЛЬТР ПО ТЕЛУ ПИСЬМА (ОБЯЗАТЕЛЬНЫЕ СЛОВА) ---
+  # Обрабатываются ТОЛЬКО письма, в теле которых есть хотя бы одно из этих слов.
+  # Полезно, если тема неинформативна, а вопрос скрыт в теле письма.
+  # Если список пустой ([]), фильтр не применяется.
+  # Регистр не важен. HTML теги игнорируются.
+  # Пример: ["ai", "модель", "chatgpt", "нейросеть"]
+  body_contains: []
+  
+  # --- БЕЛЫЙ СПИСОК ОТПРАВИТЕЛЕЙ ---
+  # Обрабатываются ТОЛЬКО письма от указанных email-адресов.
+  # Если список пустой ([]), фильтр не применяется - все отправители разрешены.
+  # Можно указывать как полный email, так и часть (например, "@company.com").
+  # Регистр не важен.
+  # Пример: 
+  #   from_whitelist: 
+  #     - "user1@example.com"
+  #     - "user2@example.com"
+  #     - "@mycompany.com"
+  from_whitelist: []
+  
+  # --- ЧЕРНЫЙ СПИСОК ОТПРАВИТЕЛЕЙ ---
+  # Письма от указанных email-адресов НЕ обрабатываются.
+  # Если список пустой ([]), фильтр не применяется.
+  # Можно указывать как полный email, так и часть (например, "@spammer.com").
+  # Регистр не важен.
+  # Пример:
+  #   from_blacklist:
+  #     - "spammer@example.com"
+  #     - "@spamdomain.com"
+  from_blacklist: []
