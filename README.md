@@ -36,32 +36,32 @@
 ```
 12_Post_Bridge/
 ├── config/
-│ ├── config.yaml # Основной конфиг (публичная часть)
-│ └── secrets.yaml # Секреты (НЕ в git!)
+│   ├── config.yaml
+│   └── secrets.yaml
 ├── src/
-│ ├── init.py
-│ ├── email_bridge.py # Главный скрипт-оркестратор
-│ ├── deepseek_client.py # Клиент DeepSeek API
-│ ├── email_reader.py # Чтение почты
-│ ├── email_sender.py # Отправка почты
-│ ├── batch_processor.py # Пакетная обработка
-│ └── logger.py # Логирование
+│   ├── __init__.py
+│   ├── email_bridge.py
+│   ├── deepseek_client.py
+│   ├── email_reader.py
+│   ├── email_sender.py
+│   ├── batch_processor.py
+│   └── logger.py
 ├── scripts/
-│ ├── 01_run_all.sh # Запуск всех сервисов
-│ ├── 02_kill_port.sh # Убить процесс на порту
-│ ├── 03_start_server.sh # Только сервер
-│ ├── 04_start_bridge.sh # Только мост
-│ ├── 05_check_status.sh # Проверка статуса
-│ └── 06_stop_bridge.sh # Остановка моста
-├── Deepseek-API/ # DeepSeek API сервер (клонируется)
-│ └── session/ # Сессия DeepSeek (важно!)
-├── email_responses/ # Ответы на письма
-│ └── json/ # JSON версии ответов
-├── logs/ # Логи
-├── venv/ # Виртуальное окружение
+│   ├── 01_run___server_and_client____run_all.sh
+│   ├── 02_stop_server.sh
+│   ├── 03_stop_client__bridge.sh
+│   ├── 04_run_server_only.sh
+│   ├── 05_run_bridge___client_only.sh
+│   └── 06_check_status__server_and_client.sh
+├── Deepseek-API/
+│   └── session/
+├── email_responses/
+│   └── json/
+├── logs/
+├── venv/
 ├── .gitignore
 ├── README.md
-└── requirements.txt # Зависимости Python
+└── requirements.txt
 
 🛠️ Установка
 1. Клонирование репозитория
