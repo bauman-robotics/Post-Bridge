@@ -1,63 +1,66 @@
-📧 DeepSeek Email Bridge
-<p align="center"> <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python"> <img src="https://img.shields.io/badge/DeepSeek-API-green.svg" alt="DeepSeek"> <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License"> </p>
-📖 О проекте
+# 📧 DeepSeek Email Bridge
 
-DeepSeek Email Bridge — это система, которая автоматически обрабатывает запросы, поступающие по электронной почте, и отправляет ответы через DeepSeek API.
-Как это работает
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python">
+  <img src="https://img.shields.io/badge/DeepSeek-API-green.svg" alt="DeepSeek">
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
+</p>
 
-    Пользователь отправляет письмо на указанный email-адрес
+## 📖 О проекте
 
-    Скрипт проверяет почту, извлекает вопрос
+**DeepSeek Email Bridge** — это система, которая автоматически обрабатывает запросы, поступающие по электронной почте, и отправляет ответы через DeepSeek API.
 
-    Запрос отправляется в DeepSeek API
+### Как это работает
 
-    Ответ отправляется обратно пользователю по email
+1. Пользователь отправляет письмо на указанный email-адрес
+2. Скрипт проверяет почту, извлекает вопрос
+3. Запрос отправляется в DeepSeek API
+4. Ответ отправляется обратно пользователю по email
+5. Все ответы сохраняются в папке `email_responses/`
 
-    Все ответы сохраняются в папке email_responses/
+---
 
-🚀 Возможности
+## 🚀 Возможности
 
-    ✅ Автоматическая обработка писем — проверка почты по расписанию
+- ✅ **Автоматическая обработка писем** — проверка почты по расписанию
+- ✅ **Интеграция с DeepSeek** — использование бесплатного API
+- ✅ **Фильтрация писем** — по теме, отправителю, содержимому
+- ✅ **Сохранение ответов** — в JSON и Markdown форматах
+- ✅ **Логирование** — подробные логи всех действий
+- ✅ **Управление процессами** — скрипты для запуска/остановки
+- ✅ **Безопасность** — секреты в отдельном файле (не в git)
 
-    ✅ Интеграция с DeepSeek — использование бесплатного API
+---
 
-    ✅ Фильтрация писем — по теме, отправителю, содержимому
-
-    ✅ Сохранение ответов — в JSON и Markdown форматах
-
-    ✅ Логирование — подробные логи всех действий
-
-    ✅ Управление процессами — скрипты для запуска/остановки
-
-    ✅ Безопасность — секреты в отдельном файле (не в git)
-
-📁 Структура проекта
-text
-
+## 📁 Структура проекта
 12_Post_Bridge/
 ├── config/
-│   ├── config.yaml          # Основной конфиг (публичная часть)
-│   └── secrets.yaml         # Секреты (НЕ в git!)
+│ ├── config.yaml # Основной конфиг (публичная часть)
+│ └── secrets.yaml # Секреты (НЕ в git!)
 ├── src/
-│   ├── email_bridge.py      # Главный скрипт-оркестратор
-│   ├── deepseek_client.py   # Клиент DeepSeek API
-│   ├── email_reader.py      # Чтение почты
-│   ├── email_sender.py      # Отправка почты
-│   └── logger.py            # Логирование
+│ ├── init.py
+│ ├── email_bridge.py # Главный скрипт-оркестратор
+│ ├── deepseek_client.py # Клиент DeepSeek API
+│ ├── email_reader.py # Чтение почты
+│ ├── email_sender.py # Отправка почты
+│ ├── batch_processor.py # Пакетная обработка
+│ └── logger.py # Логирование
 ├── scripts/
-│   ├── 01_run.sh            # Запуск всех сервисов
-│   ├── 02_kill_port.sh      # Убить процесс на порту
-│   ├── 03_start_server.sh   # Только сервер
-│   ├── 04_start_bridge.sh   # Только мост
-│   ├── 05_check_status.sh   # Проверка статуса
-│   └── 06_stop_bridge.sh    # Остановка моста
-├── Deepseek-API/            # DeepSeek API сервер
-│   └── session/             # Сессия DeepSeek (важно!)
-├── email_responses/         # Ответы на письма
-│   └── json/                # JSON версии ответов
-├── logs/                    # Логи
-├── venv/                    # Виртуальное окружение
-└── requirements.txt         # Зависимости Python
+│ ├── 01_run_all.sh # Запуск всех сервисов
+│ ├── 02_kill_port.sh # Убить процесс на порту
+│ ├── 03_start_server.sh # Только сервер
+│ ├── 04_start_bridge.sh # Только мост
+│ ├── 05_check_status.sh # Проверка статуса
+│ └── 06_stop_bridge.sh # Остановка моста
+├── Deepseek-API/ # DeepSeek API сервер (клонируется)
+│ └── session/ # Сессия DeepSeek (важно!)
+├── email_responses/ # Ответы на письма
+│ └── json/ # JSON версии ответов
+├── logs/ # Логи
+├── venv/ # Виртуальное окружение
+├── .gitignore
+├── README.md
+└── requirements.txt # Зависимости Python
 
 🛠️ Установка
 1. Клонирование репозитория
