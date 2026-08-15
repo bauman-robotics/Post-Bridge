@@ -6,7 +6,7 @@
 
 ```bash
 sudo nano /etc/systemd/system/post-bridge.service
-
+#=========================
 
 [Unit]
 Description=Post Bridge - DeepSeek Email Bridge
@@ -29,6 +29,7 @@ TimeoutStopSec=60
 [Install]
 WantedBy=multi-user.target
 
+#=========================
 
 🚀 Запуск и управление
 1. Перечитать конфигурацию systemd
