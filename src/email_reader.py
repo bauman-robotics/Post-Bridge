@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 import re
+import time
 
 # Импортируем логгер
 from logger import get_logger
@@ -33,6 +34,14 @@ class EmailReader:
             self.imap.login(self.config['username'], self.config['password'])
             self.imap.select(self.config.get('check_folder', 'INBOX'))
             self.logger.info("✅ Успешное подключение к почте")
+            
+            # ОТЛАДКА
+            import inspect
+            frame = inspect.currentframe().f_back
+            self_obj = frame.f_locals.get('self')
+            if self_obj:
+                print(f"🔍 Внутри connect: self.running = {getattr(self_obj, 'running', 'N/A')}")
+            
             return True
         except Exception as e:
             self.logger.error(f"❌ Ошибка подключения к почте: {e}")
@@ -178,42 +187,6 @@ class EmailReader:
             return body
         
         return result
-    
-    # def extract_question(self, body: str) -> str:
-    #     # Сначала очищаем тело от цитат
-    #     clean_body = self.clean_email_body(body)
-        
-    #     # Если после очистки пусто - пробуем с оригиналом
-    #     if not clean_body:
-    #         clean_body = body
-        
-    #     # Удаляем HTML
-    #     clean_body = self.clean_html(clean_body)
-        
-    #     # Ищем вопрос по маркерам
-    #     markers = [
-    #         r'(?:Вопрос|Question|Запрос|Query)\s*[:;]\s*(.+?)(?:\n\n|\Z)',
-    #         r'(?:Спроси|Ask|Спросить)\s*(.+?)(?:\n\n|\Z)',
-    #         r'[:;]\s*(.+?)(?:\n\n|\Z)',
-    #     ]
-        
-    #     for pattern in markers:
-    #         match = re.search(pattern, clean_body, re.IGNORECASE | re.DOTALL)
-    #         if match:
-    #             question = match.group(1).strip()
-    #             if question and len(question) > 5:
-    #                 return question
-        
-    #     # Если нет маркеров - берем первую непустую строку
-    #     lines = [line.strip() for line in clean_body.split('\n') if line.strip()]
-        
-    #     # Ищем первую строку, которая не является цитатой или служебной
-    #     for line in lines:
-    #         if len(line) > 10 and not line.startswith(('>', 'On', 'От:', 'From:')):
-    #             return line
-        
-    #     # Если ничего не нашли - возвращаем первые 500 символов
-    #     return clean_body[:500] if clean_body else body[:500]
     
     # Без очистки истории 
     def extract_question(self, body: str) -> str:
@@ -405,3 +378,46 @@ class EmailReader:
             self.logger.debug(f"Письмо перемещено в '{folder}'")
         except Exception as e:
             self.logger.warning(f"Ошибка перемещения письма в '{folder}': {e}")
+
+    def wait_for_new_emails(self, timeout: int = 60, stop_check=None) -> bool:
+        """
+        Ожидание новых писем.
+        
+        Args:
+            timeout: Максимальное время ожидания в секундах
+            stop_check: Функция для проверки флага остановки
+            
+        Returns:
+            True если есть новые письма, False если нет
+        """
+        if not self.imap:
+            return False
+        
+        try:
+            self.imap.select(self.config.get('check_folder', 'INBOX'))
+            
+            # Быстрая проверка
+            status, messages = self.imap.search(None, 'UNSEEN')
+            if status == 'OK' and messages[0]:
+                return True
+            
+            # Ожидание с проверкой флага
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                # Проверяем флаг остановки
+                if stop_check and not stop_check():
+                    self.logger.debug("🛑 Остановка по флагу")
+                    return False
+                
+                # Проверяем новые письма
+                status, messages = self.imap.search(None, 'UNSEEN')
+                if status == 'OK' and messages[0]:
+                    return True
+                
+                time.sleep(2)
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка: {e}")
+            return False

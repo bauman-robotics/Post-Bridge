@@ -69,12 +69,185 @@ class EmailBridge:
             'started': datetime.now().isoformat()
         }
     
+    def _run_polling_mode(self):
+        """Режим пуллинга (проверка каждые N секунд)"""
+        interval = self.config.get('general', {}).get('email_check_interval', 60)
+        
+        self.logger.info(f"📡 Режим polling: проверка каждые {interval} сек")
+        print(f"📡 Режим polling: проверка каждые {interval} сек")
+        
+        while self.running:
+            try:
+                self.run_email_processing()
+                
+                # Ожидание с возможностью прерывания
+                for _ in range(interval):
+                    if not self.running:
+                        break
+                    time.sleep(1)
+                    
+            except Exception as e:
+                self.logger.error(f"❌ Ошибка в polling цикле: {e}")
+                print(f"❌ Ошибка в polling цикле: {e}")
+                time.sleep(10)
+
+    def _run_idle_mode(self):
+        """Режим IDLE (мгновенная реакция)"""
+        idle_timeout = self.config.get('general', {}).get('idle_timeout', 60)
+        
+        self.logger.info(f"📡 Режим idle: ожидание до {idle_timeout} сек")
+        print(f"📡 Режим idle: ожидание до {idle_timeout} сек")
+        
+        while self.running:
+            try:
+                # Подключаемся
+                if not self.email_reader.connect():
+                    time.sleep(10)
+                    continue
+                
+                # Ждем новые письма
+                if self.email_reader.wait_for_new_emails(timeout=idle_timeout):
+                    self.run_email_processing()
+                
+                # Отключаемся (переподключение в следующей итерации)
+                self.email_reader.disconnect()
+                
+            except Exception as e:
+                self.logger.error(f"❌ Ошибка в idle цикле: {e}")
+                print(f"❌ Ошибка в idle цикле: {e}")
+                self.email_reader.disconnect()
+                time.sleep(10)
+
+    def _run_hybrid_mode(self):
+        """Гибридный режим: IDLE + резервный пуллинг"""
+        # ОТЛАДКА: проверяем состояние при входе
+        print(f"\n🔍 Вход в hybrid_mode: self.running = {self.running}")
+        self.logger.info(f"🔍 Вход в hybrid_mode: self.running = {self.running}")
+        
+        if not self.running:
+            print("❌ self.running = False при входе в гибридный режим!")
+            import traceback
+            traceback.print_stack()
+            return
+        
+        idle_timeout = self.config.get('general', {}).get('idle_timeout', 60)
+        
+        fallback_interval = self.config.get('general', {}).get('fallback_poll_interval', 600)
+        
+        self.logger.info(f"📡 Режим hybrid: IDLE {idle_timeout}сек + резервный пуллинг {fallback_interval}сек")
+        print(f"📡 Режим hybrid: IDLE {idle_timeout}сек + резервный пуллинг {fallback_interval}сек")
+        
+        last_poll = 0
+        
+        while self.running:
+            try:
+                # ===== ПРОВЕРКА В НАЧАЛЕ ЦИКЛА =====
+                if not self.running:
+                    self.logger.info("🛑 Выход: флаг сброшен в начале цикла")
+                    break
+                
+                # Подключаемся
+                if not self.email_reader.connect():
+                    if not self.running:
+                        break
+                    time.sleep(10)
+                    continue
+                
+                # ===== ОТЛАДКА ПРЯМО ЗДЕСЬ =====
+                print(f"🔍 ПОСЛЕ connect: self.running = {self.running}")
+                self.logger.info(f"🔍 ПОСЛЕ connect: self.running = {self.running}")
+
+                
+                # ===== ПРОВЕРКА ПОСЛЕ ПОДКЛЮЧЕНИЯ =====
+                if not self.running:
+                    self.email_reader.disconnect()
+                    self.logger.info("🛑 Выход: флаг сброшен после подключения")
+                    break
+                
+                # Ждем новые письма
+                new_emails = self.email_reader.wait_for_new_emails(
+                    timeout=idle_timeout,
+                    stop_check=lambda: not self.running
+                )
+                
+                # ===== ПРОВЕРКА ПОСЛЕ ОЖИДАНИЯ =====
+                if not self.running:
+                    self.email_reader.disconnect()
+                    self.logger.info("🛑 Выход: флаг сброшен после IDLE")
+                    break
+                
+                # Если IDLE сработал или прошло время резервной проверки
+                current_time = time.time()
+                if new_emails or (current_time - last_poll > fallback_interval):
+                    self.run_email_processing()
+                    last_poll = current_time
+                
+                # ===== ПРОВЕРКА ПОСЛЕ ОБРАБОТКИ =====
+                if not self.running:
+                    self.email_reader.disconnect()
+                    self.logger.info("🛑 Выход: флаг сброшен после обработки")
+                    break
+                
+                # Отключаемся
+                self.email_reader.disconnect()
+                
+            except Exception as e:
+                self.logger.error(f"❌ Ошибка в гибридном цикле: {e}")
+                print(f"❌ Ошибка в гибридном цикле: {e}")
+                try:
+                    self.email_reader.disconnect()
+                except:
+                    pass
+                if not self.running:
+                    self.logger.info("🛑 Выход: флаг сброшен после ошибки")
+                    break
+                time.sleep(10)
+        
+        self.logger.info("👋 Завершение гибридного режима")
+        print("👋 Завершение гибридного режима")
+
     def signal_handler(self, signum, frame):
         """Обработчик сигналов для корректного завершения"""
-        print("\n🛑 Получен сигнал завершения. Останавливаюсь...")
-        if hasattr(self, 'logger'):
-            self.logger.info("🛑 Получен сигнал завершения")
+        import os
+        
+        # Игнорируем сигналы, если они пришли не от терминала
+        # Сигналы от системы обычно приходят с PID = 0 или 1
+        if frame and frame.f_code.co_filename == '<signal handler>':
+            print(f"\n🛑 Системный сигнал {signum} - игнорирую")
+            return
+        
+        print(f"\n🛑 Получен сигнал {signum}. Останавливаюсь...")
+        
+        # Устанавливаем флаг остановки
         self.running = False
+        self.logger.info(f"🛑 Получен сигнал {signum}")  # <-- ДОБАВИТЬ
+        self.logger.info("🛑 Получен сигнал завершения")
+        
+        # Отключаемся от почты
+        if hasattr(self, 'email_reader') and self.email_reader:
+            try:
+                if self.email_reader.imap:
+                    self.email_reader.imap.send(b'DONE\r\n')
+                    self.logger.debug("✅ Отправлен DONE в IDLE")
+            except:
+                pass
+            
+            try:
+                self.email_reader.disconnect()
+            except:
+                pass
+        
+        # ===== НЕ ЖДЕМ 2 СЕКУНДЫ, ВЫХОДИМ СРАЗУ =====
+        # Это гарантирует завершение, даже если цикл завис
+        import threading
+        def force_exit():
+            time.sleep(1)  # Даем время на корректное завершение
+            self.logger.warning("⚠️ Принудительный выход")
+            os._exit(0)
+        
+        exit_thread = threading.Thread(target=force_exit)
+        exit_thread.daemon = True
+        exit_thread.start()
     
     def load_config(self, config_path: str, secrets_path: str) -> Dict:
         """Загрузка конфигурации и секретов"""
@@ -759,56 +932,22 @@ class EmailBridge:
         return total
     
     def run_forever(self):
-        """Бесконечный цикл проверки"""
+        """Бесконечный цикл с выбором режима ожидания"""
         general = self.config.get('general', {})
-        email_interval = general.get('email_check_interval', 60)
-        batch_interval = general.get('batch_check_interval', 3600)
+        wait_mode = general.get('email_wait_mode', 'polling')
         
         print("🚀 Запуск почтового моста")
         print(f"📧 Почта: {self.config.get('email', {}).get('username', '')}")
         print(f"🤖 Модель: {self.config.get('deepseek', {}).get('model', 'deepseek-chat')}")
+        print(f"📡 Режим ожидания: {wait_mode}")
         print("="*50)
         
-        last_batch_check = 0
-        
-        while self.running:
-            try:
-                # Проверка почты
-                if general.get('enable_email_processing', True):
-                    self.run_email_processing()
-                
-                # Пакетная обработка
-                if general.get('enable_batch_processing', False):
-                    current_time = time.time()
-                    if current_time - last_batch_check >= batch_interval:
-                        self.run_batch_processing()
-                        last_batch_check = current_time
-                
-                # Ожидание
-                for _ in range(email_interval):
-                    if not self.running:
-                        break
-                    time.sleep(1)
-                    
-            except Exception as e:
-                print(f"❌ Ошибка в основном цикле: {e}")
-                self.logger.error(f"❌ Ошибка в основном цикле: {e}")
-                time.sleep(10)
-        
-        print("\n📊 ИТОГОВАЯ СТАТИСТИКА")
-        print(f"   Обработано запросов: {self.stats['processed']}")
-        print(f"   Ошибок: {self.stats['errors']}")
-        print(f"   Начато сессий: {self.stats['sessions_started']}")
-        print(f"   Продолжено сессий: {self.stats['sessions_continued']}")
-        print(f"   Запущен: {self.stats['started']}")
-        self.logger.info("📊 ИТОГОВАЯ СТАТИСТИКА")
-        self.logger.info(f"   Обработано запросов: {self.stats['processed']}")
-        self.logger.info(f"   Ошибок: {self.stats['errors']}")
-        self.logger.info(f"   Начато сессий: {self.stats['sessions_started']}")
-        self.logger.info(f"   Продолжено сессий: {self.stats['sessions_continued']}")
-        print("👋 Завершение работы")
-        self.logger.info("👋 Завершение работы")
-
+        if wait_mode == 'idle':
+            self._run_idle_mode()
+        elif wait_mode == 'hybrid':
+            self._run_hybrid_mode()
+        else:
+            self._run_polling_mode()
 
 def main():
     """Точка входа"""
