@@ -9,6 +9,7 @@ sudo nano /etc/systemd/system/post-bridge.service
 #=========================
 
 [Unit]
+[Unit]
 Description=Post Bridge - DeepSeek Email Bridge
 After=network.target
 Wants=network-online.target
@@ -17,10 +18,12 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 User=root
-WorkingDirectory=/root/Post-Bridge
-ExecStart=/root/Post-Bridge/scripts/01_run___server_and_client____run_all.sh start
-ExecStop=/root/Post-Bridge/scripts/01_run___server_and_client____run_all.sh stop
-ExecReload=/root/Post-Bridge/scripts/01_run___server_and_client____run_all.sh restart
+WorkingDirectory=/root/Post-Bridge/scripts
+ExecStart=/root/Post-Bridge/scripts/01_run___server_and_client____run_all.sh
+ExecStop=/root/Post-Bridge/scripts/03_stop_client__bridge.sh --force
+ExecStopPost=/root/Post-Bridge/scripts/02_stop_server.sh 8001 --force
+Restart=on-failure
+RestartSec=10
 StandardOutput=append:/root/Post-Bridge/logs/service.log
 StandardError=append:/root/Post-Bridge/logs/service_error.log
 TimeoutStartSec=60
