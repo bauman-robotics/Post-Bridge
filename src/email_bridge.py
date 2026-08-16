@@ -153,11 +153,16 @@ class EmailBridge:
         if self.sessions_file.exists():
             try:
                 with open(self.sessions_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # Конвертируем старый формат (строка) в новый (список)
+                    for email, value in data.items():
+                        if isinstance(value, str):
+                            data[email] = [value]
+                    return data
             except:
                 return {}
         return {}
-    
+        
     def save_sessions(self):
         """Сохранение сессий в файл"""
         try:
@@ -167,27 +172,29 @@ class EmailBridge:
             self.logger.error(f"Ошибка сохранения сессий: {e}")
     
     def get_session_id_for_sender(self, from_addr: str) -> Optional[str]:
-        """Получение session_id для отправителя"""
-        # Ищем точное совпадение email
-        if from_addr in self.sessions:
-            return self.sessions[from_addr]
-        
-        # Ищем частичное совпадение (например, user@domain.com)
-        for email, session_id in self.sessions.items():
-            if from_addr.lower() in email.lower() or email.lower() in from_addr.lower():
-                return session_id
-        
+        """Получение последней сессии для отправителя"""
+        if from_addr in self.sessions and self.sessions[from_addr]:
+            # Возвращаем ПОСЛЕДНЮЮ сессию из списка
+            return self.sessions[from_addr][-1]
         return None
-    
+        
+    def session_exists(self, session_id: str) -> bool:
+        """Проверка, существует ли сессия с таким ID"""
+        for email, sessions in self.sessions.items():
+            if session_id in sessions:
+                return True
+        return False
+
     def extract_session_id_from_subject(self, subject: str) -> Optional[str]:
         """Извлечение session_id из темы письма"""
         if not subject:
             return None
-        match = re.search(r'\[SID:([a-zA-Z0-9\-_]+)\]', subject)
+        # Разрешаем двоеточие в SID (формат: UUID:номер)
+        match = re.search(r'\[SID:([a-zA-Z0-9\-_:]+)\]', subject)
         if match:
             return match.group(1)
         return None
-    
+
     def generate_session_id(self) -> str:
         """Генерация нового session_id"""
         # Вместо короткого UUID генерируем полный
@@ -273,33 +280,34 @@ class EmailBridge:
         if enable_sessions:
             # 1. Если передан session_id (для batch режима)
             if session_id:
-                # Проверяем, существует ли такая сессия
-                if session_id in self.sessions.values():
-                    # Находим владельца сессии
-                    for email, sid in self.sessions.items():
-                        if sid == session_id:
-                            if email == from_addr:
-                                used_session_id = session_id
-                                self.logger.info(f"🔄 Продолжение сессии {session_id} для {from_addr} (из batch)")
-                                print(f"🔄 Продолжение сессии: {session_id}")
-                                self.stats['sessions_continued'] += 1
-                            else:
-                                # Сессия принадлежит другому
-                                self.logger.warning(f"⚠️ Session {session_id} принадлежит {email}, а запрос от {from_addr}. Начинаем новую сессию.")
-                                is_new_session = True
-                else:
-                    # Session ID не найден
+                # Проверяем, существует ли сессия в списках
+                found = False
+                for email, sessions in self.sessions.items():
+                    if session_id in sessions:
+                        found = True
+                        # Находим владельца
+                        if email == from_addr:
+                            used_session_id = session_id
+                            self.logger.info(f"🔄 Продолжение сессии {session_id} для {from_addr} (из batch)")
+                            print(f"🔄 Продолжение сессии: {session_id}")
+                            self.stats['sessions_continued'] += 1
+                        else:
+                            self.logger.warning(f"⚠️ Session {session_id} принадлежит {email}, а запрос от {from_addr}. Начинаем новую сессию.")
+                            is_new_session = True
+                        break
+                if not found:
                     self.logger.warning(f"⚠️ Session ID {session_id} не найден. Начинаем новую сессию.")
                     is_new_session = True
-            
+
             # 2. Если нет session_id, пробуем извлечь из subject
             if not used_session_id and not is_new_session:
                 extracted_sid = self.extract_session_id_from_subject(subject)
                 if extracted_sid:
                     # Проверяем, существует ли сессия
-                    if extracted_sid in self.sessions.values():
-                        for email, sid in self.sessions.items():
-                            if sid == extracted_sid:
+                    if self.session_exists(extracted_sid):
+                        # Находим владельца
+                        for email, sessions in self.sessions.items():
+                            if extracted_sid in sessions:
                                 if email == from_addr:
                                     used_session_id = extracted_sid
                                     self.logger.info(f"🔄 Продолжение сессии {extracted_sid} для {from_addr} (из темы)")
@@ -308,25 +316,20 @@ class EmailBridge:
                                 else:
                                     self.logger.warning(f"⚠️ Session {extracted_sid} принадлежит {email}")
                                     is_new_session = True
+                                break
                     else:
                         self.logger.warning(f"⚠️ Session ID {extracted_sid} не найден")
                         is_new_session = True
             
-            # 3. Если нет сессии, проверяем сохраненную для отправителя
+            # 3. Если нет session_id в теме - создаем новую сессию
             if not used_session_id and not is_new_session:
-                saved_session = self.get_session_id_for_sender(from_addr)
-                if saved_session:
-                    used_session_id = saved_session
-                    self.logger.info(f"🔄 Продолжение сессии {saved_session} для {from_addr} (из сохраненных)")
-                    print(f"🔄 Продолжение сохраненной сессии: {saved_session}")
-                    self.stats['sessions_continued'] += 1
-                else:
-                    # Начинаем новую сессию - НЕ ГЕНЕРИРУЕМ ID!
-                    is_new_session = True
-                    # used_session_id остается None, API сам создаст conversation_id
-                    self.logger.info(f"✨ Создание новой сессии для {from_addr}")
-                    print(f"✨ Создание новой сессии для {from_addr}")
-                    self.stats['sessions_started'] += 1
+                # НЕ проверяем сохраненную сессию для отправителя
+                # Всегда создаем новую, если в теме нет [SID:...]
+                is_new_session = True
+                # used_session_id остается None, API сам создаст conversation_id
+                self.logger.info(f"✨ Создание новой сессии для {from_addr} (нет SID в теме)")
+                print(f"✨ Создание новой сессии для {from_addr} (нет SID в теме)")
+                self.stats['sessions_started'] += 1
             
             # Если все еще нет сессии - создаем новую
             if not used_session_id and is_new_session:
@@ -345,10 +348,17 @@ class EmailBridge:
         )
         
         if answer and enable_sessions:
-            # Обновляем session_id если получен новый
             if new_session_id:
                 used_session_id = new_session_id
-                self.sessions[from_addr] = used_session_id
+                # Сохраняем ВСЕ сессии (список)
+                if from_addr not in self.sessions:
+                    self.sessions[from_addr] = []
+                # Добавляем новую сессию, если её ещё нет
+                if used_session_id not in self.sessions[from_addr]:
+                    self.sessions[from_addr].append(used_session_id)
+                # Ограничиваем количество сессий (например, 20 последних)
+                if len(self.sessions[from_addr]) > 20:
+                    self.sessions[from_addr] = self.sessions[from_addr][-20:]
                 self.save_sessions()
                 self.logger.info(f"💾 Сессия {used_session_id} сохранена для {from_addr}")
                 print(f"💾 Сессия сохранена: {used_session_id}")

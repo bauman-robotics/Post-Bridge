@@ -93,71 +93,180 @@ class EmailReader:
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
     
-    def extract_question(self, body: str) -> str:
-        clean_body = self.clean_html(body)
-        markers = [
-            r'(?:Вопрос|Question|Запрос|Query)\s*[:;]\s*(.+?)(?:\n\n|\Z)',
-            r'(?:Спроси|Ask|Спросить)\s*(.+?)(?:\n\n|\Z)',
-            r'[:;]\s*(.+?)(?:\n\n|\Z)',
-        ]
-        for pattern in markers:
-            match = re.search(pattern, clean_body, re.IGNORECASE | re.DOTALL)
-            if match:
-                question = match.group(1).strip()
-                if question and len(question) > 5:
-                    return question
-        lines = [line.strip() for line in clean_body.split('\n') if line.strip()]
-        if lines:
-            if len(lines[0]) > 10:
-                return lines[0]
-            return ' '.join(lines[:3])
-        return clean_body[:500] if clean_body else body[:500]
+    def clean_email_body(self, body: str) -> str:
+        """
+        Очистка тела письма от цитат и метаданных
+        """
+        if not body:
+            return body
+        
+        lines = body.split('\n')
+        clean_lines = []
+        skip_quote = False
+        found_new_question = False
+        
+        for line in lines:
+            line_stripped = line.strip()
+            
+            # Пропускаем пустые строки в начале
+            if not line_stripped and not clean_lines and not found_new_question:
+                continue
+            
+            # ===== ПРОПУСКАЕМ ЦИТАТЫ =====
+            # Строки-цитаты (начинаются с >)
+            if line_stripped.startswith('>'):
+                continue
+            
+            # Строки с "On ... wrote:"
+            if re.match(r'^On .+ wrote:', line_stripped):
+                skip_quote = True
+                continue
+            
+            # ===== ПРОПУСКАЕМ ЗАГОЛОВКИ =====
+            if re.match(r'^(От|From|Sent|To|Subject|Date|Тема|Отправитель|Кому|Дата|Cc|Bcc):', line_stripped, re.IGNORECASE):
+                continue
+            
+            # ===== ПРОПУСКАЕМ РАЗДЕЛИТЕЛИ =====
+            if re.match(r'^[-_]{3,}$', line_stripped):
+                skip_quote = True
+                continue
+            
+            # ===== ПРОПУСКАЕМ МАРКЕРЫ ПИСЕМ БОТА =====
+            # Удаляем строки с эмодзи-маркерами из писем бота
+            if any(marker in line_stripped for marker in [
+                '📝 **Ваш вопрос:**',
+                '💬 **Ответ:**',
+                '🆕 Начата новая сессия',
+                '🔄 Продолжение сессии',
+                'автоматический ответ от DeepSeek',
+                'Это автоматический ответ от DeepSeek AI',
+                'Если у вас есть дополнительные вопросы'
+            ]):
+                skip_quote = True
+                continue
+            
+            # Удаляем строки с датой в формате "DD.MM.YYYY HH:MM"
+            if re.search(r'\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}', line_stripped):
+                if skip_quote or '📅' in line_stripped:
+                    continue
+            
+            # ===== ПРОВЕРЯЕМ, НЕ НАЧАЛСЯ ЛИ НОВЫЙ ВОПРОС =====
+            # Если строка не является цитатой и длиннее 10 символов,
+            # и это не маркер бота - это может быть новый вопрос
+            if not skip_quote and len(line_stripped) > 10:
+                # Если мы нашли потенциальный вопрос, сбрасываем skip_quote
+                found_new_question = True
+            
+            # Если мы в режиме пропуска и встретили пустую строку - возможно конец цитаты
+            if skip_quote and not line_stripped:
+                # Не сбрасываем skip_quote полностью, а проверяем следующую строку
+                continue
+            
+            # Если строка начинается с "##" - это маркдаун заголовок из цитаты
+            if line_stripped.startswith('##') and skip_quote:
+                continue
+            
+            # Добавляем строку, если она не в режиме пропуска
+            if not skip_quote:
+                clean_lines.append(line)
+        
+        # Удаляем лишние пустые строки
+        result = '\n'.join(clean_lines).strip()
+        
+        # Если после очистки ничего не осталось, возвращаем исходный текст
+        if not result:
+            return body
+        
+        return result
     
+    # def extract_question(self, body: str) -> str:
+    #     # Сначала очищаем тело от цитат
+    #     clean_body = self.clean_email_body(body)
+        
+    #     # Если после очистки пусто - пробуем с оригиналом
+    #     if not clean_body:
+    #         clean_body = body
+        
+    #     # Удаляем HTML
+    #     clean_body = self.clean_html(clean_body)
+        
+    #     # Ищем вопрос по маркерам
+    #     markers = [
+    #         r'(?:Вопрос|Question|Запрос|Query)\s*[:;]\s*(.+?)(?:\n\n|\Z)',
+    #         r'(?:Спроси|Ask|Спросить)\s*(.+?)(?:\n\n|\Z)',
+    #         r'[:;]\s*(.+?)(?:\n\n|\Z)',
+    #     ]
+        
+    #     for pattern in markers:
+    #         match = re.search(pattern, clean_body, re.IGNORECASE | re.DOTALL)
+    #         if match:
+    #             question = match.group(1).strip()
+    #             if question and len(question) > 5:
+    #                 return question
+        
+    #     # Если нет маркеров - берем первую непустую строку
+    #     lines = [line.strip() for line in clean_body.split('\n') if line.strip()]
+        
+    #     # Ищем первую строку, которая не является цитатой или служебной
+    #     for line in lines:
+    #         if len(line) > 10 and not line.startswith(('>', 'On', 'От:', 'From:')):
+    #             return line
+        
+    #     # Если ничего не нашли - возвращаем первые 500 символов
+    #     return clean_body[:500] if clean_body else body[:500]
+    
+    # Без очистки истории 
+    def extract_question(self, body: str) -> str:
+        """
+        Извлечение вопроса из тела письма.
+        Возвращает ВЕСЬ текст письма как есть.
+        """
+        if not body:
+            return ""
+        
+        # Просто удаляем HTML (чтобы не было тегов)
+        clean_body = self.clean_html(body)
+        
+        # Возвращаем ВЕСЬ текст
+        return clean_body.strip() if clean_body else body.strip()
+
     def extract_session_id(self, subject: str) -> Optional[str]:
         """Извлечение session_id из темы письма"""
         if not subject:
             return None
-        match = re.search(r'\[SID:([a-zA-Z0-9\-_]+)\]', subject)
+        match = re.search(r'\[SID:([a-zA-Z0-9\-_:]+)\]', subject)
         if match:
             return match.group(1)
         return None
     
     def passes_filters(self, subject: str, from_addr: str, body: str = "") -> Tuple[bool, str]:
-        """
-        Проверка фильтров для письма
-        """
+        """Проверка фильтров для письма"""
         filters = self.config.get('filters', {})
         
-        # ===== ЖЕСТКАЯ ПРОВЕРКА: пустая тема =====
+        # Проверка по теме
         subject_contains = filters.get('subject_contains', [])
         if subject_contains:
-            # Если тема пустая или состоит только из пробелов
             if not subject or not subject.strip():
                 return False, f"Тема письма пуста, а требуется одно из слов: {subject_contains}"
             
-            # Проверяем наличие ключевых слов
             has_keyword = False
-            matched_keyword = None
             subject_lower = subject.lower()
             for keyword in subject_contains:
                 if keyword.lower() in subject_lower:
                     has_keyword = True
-                    matched_keyword = keyword
                     break
             
             if not has_keyword:
                 return False, f"В теме нет обязательных слов: {subject_contains}"
-            else:
-                self.logger.debug(f"Найдено ключевое слово в теме: '{matched_keyword}'")
         
-        # Проверка черного списка отправителей
+        # Проверка черного списка
         blacklist = filters.get('from_blacklist', [])
         if blacklist:
             for blocked in blacklist:
                 if blocked.lower() in from_addr.lower():
                     return False, f"Отправитель в черном списке: {blocked}"
         
-        # Проверка белого списка отправителей
+        # Проверка белого списка
         whitelist = filters.get('from_whitelist', [])
         if whitelist:
             allowed = False
@@ -168,29 +277,13 @@ class EmailReader:
             if not allowed:
                 return False, "Отправитель не в белом списке"
         
-        # Проверка отсутствия ключевых слов в теме
+        # Проверка запрещенных слов в теме
         subject_not_contains = filters.get('subject_not_contains', [])
         if subject_not_contains:
             subject_lower = subject.lower()
             for forbidden in subject_not_contains:
                 if forbidden.lower() in subject_lower:
                     return False, f"В теме есть запрещенное слово: '{forbidden}'"
-        
-        # Проверка наличия ключевых слов в теле письма
-        body_contains = filters.get('body_contains', [])
-        if body_contains and body:
-            has_keyword = False
-            matched_keyword = None
-            clean_body = self.clean_html(body).lower()
-            for keyword in body_contains:
-                if keyword.lower() in clean_body:
-                    has_keyword = True
-                    matched_keyword = keyword
-                    break
-            if not has_keyword:
-                return False, f"В теле нет обязательных слов: {body_contains}"
-            else:
-                self.logger.debug(f"Найдено ключевое слово в теле: '{matched_keyword}'")
         
         return True, "OK"
     
@@ -240,17 +333,12 @@ class EmailReader:
                     body = self.get_email_body(msg)
                     question = self.extract_question(body)
                     
-                    # Извлекаем session_id из темы
                     session_id = self.extract_session_id(subject)
                     
                     subject_display = subject[:50] + "..." if len(subject) > 50 else subject
                     self.logger.debug(f"Обработка письма от {from_addr} | Тема: '{subject_display}'")
                     if session_id:
                         self.logger.debug(f"   🔑 Session ID: {session_id}")
-                    
-                    # ===== ОТЛАДОЧНЫЙ ВЫВОД =====
-                    self.logger.debug(f"   🔍 Проверка фильтров...")
-                    self.logger.debug(f"   ⚙️  Фильтр subject_contains: {self.config.get('filters', {}).get('subject_contains', [])}")
                     
                     # Проверяем фильтры
                     passes, reason = self.passes_filters(subject, from_addr, body)
@@ -317,29 +405,3 @@ class EmailReader:
             self.logger.debug(f"Письмо перемещено в '{folder}'")
         except Exception as e:
             self.logger.warning(f"Ошибка перемещения письма в '{folder}': {e}")
-
-
-if __name__ == "__main__":
-    import yaml
-    
-    with open('config.yaml', 'r') as f:
-        config = yaml.safe_load(f)
-    
-    if 'email' not in config:
-        config['email'] = {}
-    if 'filters' not in config:
-        config['filters'] = {}
-    
-    reader = EmailReader(config['email'])
-    
-    if reader.connect():
-        emails = reader.get_emails(limit=3)
-        print(f"\n📊 Найдено писем после фильтрации: {len(emails)}")
-        
-        for email_data in emails:
-            print(f"\n📧 От: {email_data['from']}")
-            print(f"📝 Тема: {email_data['subject']}")
-            print(f"🔑 Session ID: {email_data.get('session_id', 'Нет')}")
-            print(f"❓ Вопрос: {email_data['question'][:100]}...")
-        
-        reader.disconnect()
