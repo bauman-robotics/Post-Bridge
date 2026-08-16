@@ -7,6 +7,7 @@
 """
 
 import smtplib
+import re
 from email.message import EmailMessage
 from email.header import Header
 from email.utils import formataddr
@@ -30,6 +31,7 @@ class EmailSender:
         self.include_question = config.get('include_question_in_response', True)
         self.signature = config.get('response_signature', "🤖 Это автоматический ответ от DeepSeek AI.")
         self.footer = config.get('response_footer', "")
+        self.include_session_in_subject = config.get('include_session_in_subject', True)
     
     def connect(self) -> bool:
         """Подключение к SMTP серверу"""
@@ -61,7 +63,9 @@ class EmailSender:
                       original_subject: str = "",
                       reply_to: Optional[str] = None,
                       include_question: Optional[bool] = None,
-                      signature: Optional[str] = None) -> bool:
+                      signature: Optional[str] = None,
+                      session_id: Optional[str] = None,
+                      is_new_session: bool = False) -> bool:
         """
         Отправка ответа на письмо
         
@@ -73,6 +77,8 @@ class EmailSender:
             reply_to: Email для ответа
             include_question: Включать ли вопрос в тело письма (если None - берется из конфига)
             signature: Подпись в конце письма (если None - берется из конфига)
+            session_id: ID сессии для включения в тему
+            is_new_session: Флаг новой сессии
             
         Returns:
             True если отправлено успешно
@@ -84,14 +90,29 @@ class EmailSender:
             # Создаем письмо
             msg = EmailMessage()
             
-            # Тема
-            if original_subject:
-                if not original_subject.lower().startswith('re:'):
-                    subject = f"Re: {original_subject}"
+            # Тема с session_id
+            if self.include_session_in_subject and session_id:
+                session_tag = f"[SID:{session_id}]"
+                
+                if original_subject:
+                    # Если тема уже содержит SID, заменяем его
+                    if re.search(r'\[SID:[a-zA-Z0-9\-_]+\]', original_subject):
+                        subject = re.sub(r'\[SID:[a-zA-Z0-9\-_]+\]', session_tag, original_subject)
+                    else:
+                        if not original_subject.lower().startswith('re:'):
+                            subject = f"Re: {session_tag} {original_subject}"
+                        else:
+                            subject = f"{session_tag} {original_subject}"
                 else:
-                    subject = original_subject
+                    subject = f"{session_tag} Ответ на ваш запрос"
             else:
-                subject = "Ответ на ваш запрос"
+                if original_subject:
+                    if not original_subject.lower().startswith('re:'):
+                        subject = f"Re: {original_subject}"
+                    else:
+                        subject = original_subject
+                else:
+                    subject = "Ответ на ваш запрос"
             
             msg['Subject'] = subject
             msg['From'] = self.config['username']
@@ -114,6 +135,14 @@ class EmailSender:
             greeting = self.config.get('greeting', "Здравствуйте!")
             body_parts.append(greeting)
             body_parts.append("")
+            
+            # Информация о сессии
+            if session_id:
+                if is_new_session:
+                    body_parts.append(f"🆕 Начата новая сессия: **{session_id}**")
+                else:
+                    body_parts.append(f"🔄 Продолжение сессии: **{session_id}**")
+                body_parts.append("")
             
             # Добавляем вопрос если нужно
             if include_question:
@@ -149,6 +178,8 @@ class EmailSender:
             print(f"✅ Ответ отправлен на {to_email}")
             print(f"   📝 Вопрос: {question[:50]}...")
             print(f"   💬 Ответ: {answer[:50]}...")
+            if session_id:
+                print(f"   🔑 Session: {session_id} {'(новая)' if is_new_session else '(продолжение)'}")
             return True
             
         except Exception as e:
@@ -159,7 +190,8 @@ class EmailSender:
                            to_email: str,
                            error_msg: str,
                            original_question: str = "",
-                           original_subject: str = "") -> bool:
+                           original_subject: str = "",
+                           session_id: Optional[str] = None) -> bool:
         """
         Отправка письма об ошибке
         
@@ -168,6 +200,7 @@ class EmailSender:
             error_msg: Сообщение об ошибке
             original_question: Оригинальный вопрос
             original_subject: Оригинальная тема письма
+            session_id: ID сессии
             
         Returns:
             True если отправлено успешно
@@ -178,10 +211,18 @@ class EmailSender:
         try:
             msg = EmailMessage()
             
-            if original_subject:
-                subject = f"Re: {original_subject}"
+            # Тема с session_id
+            if self.include_session_in_subject and session_id:
+                session_tag = f"[SID:{session_id}]"
+                if original_subject:
+                    subject = f"{session_tag} Re: {original_subject}"
+                else:
+                    subject = f"{session_tag} Ошибка обработки запроса"
             else:
-                subject = "Ошибка обработки запроса"
+                if original_subject:
+                    subject = f"Re: {original_subject}"
+                else:
+                    subject = "Ошибка обработки запроса"
             
             msg['Subject'] = subject
             msg['From'] = self.config['username']
@@ -267,11 +308,13 @@ if __name__ == "__main__":
     sender = EmailSender(config['email'])
     
     if sender.connect():
-        # Отправка тестового письма с вопросом
+        # Отправка тестового письма с вопросом и сессией
         sender.send_response(
             to_email="recipient@example.com",
             question="Какая погода будет завтра в Москве?",
             answer="Завтра в Москве ожидается переменная облачность, температура +20°C, без осадков.",
-            original_subject="Вопрос о погоде"
+            original_subject="Вопрос о погоде",
+            session_id="abc12345",
+            is_new_session=True
         )
         sender.disconnect()

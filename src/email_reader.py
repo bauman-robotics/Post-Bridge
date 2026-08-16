@@ -113,6 +113,15 @@ class EmailReader:
             return ' '.join(lines[:3])
         return clean_body[:500] if clean_body else body[:500]
     
+    def extract_session_id(self, subject: str) -> Optional[str]:
+        """Извлечение session_id из темы письма"""
+        if not subject:
+            return None
+        match = re.search(r'\[SID:([a-zA-Z0-9\-_]+)\]', subject)
+        if match:
+            return match.group(1)
+        return None
+    
     def passes_filters(self, subject: str, from_addr: str, body: str = "") -> Tuple[bool, str]:
         """
         Проверка фильтров для письма
@@ -231,8 +240,13 @@ class EmailReader:
                     body = self.get_email_body(msg)
                     question = self.extract_question(body)
                     
+                    # Извлекаем session_id из темы
+                    session_id = self.extract_session_id(subject)
+                    
                     subject_display = subject[:50] + "..." if len(subject) > 50 else subject
                     self.logger.debug(f"Обработка письма от {from_addr} | Тема: '{subject_display}'")
+                    if session_id:
+                        self.logger.debug(f"   🔑 Session ID: {session_id}")
                     
                     # ===== ОТЛАДОЧНЫЙ ВЫВОД =====
                     self.logger.debug(f"   🔍 Проверка фильтров...")
@@ -273,6 +287,7 @@ class EmailReader:
                         'date': date,
                         'body': body,
                         'question': question,
+                        'session_id': session_id,
                         'raw_message': msg
                     })
                     
@@ -324,6 +339,7 @@ if __name__ == "__main__":
         for email_data in emails:
             print(f"\n📧 От: {email_data['from']}")
             print(f"📝 Тема: {email_data['subject']}")
+            print(f"🔑 Session ID: {email_data.get('session_id', 'Нет')}")
             print(f"❓ Вопрос: {email_data['question'][:100]}...")
         
         reader.disconnect()

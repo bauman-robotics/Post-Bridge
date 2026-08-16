@@ -5,10 +5,11 @@
 # Общие настройки
 general:
   mode: "server"
-  enable_email_processing: true
-  enable_batch_processing: false
+  enable_email_processing: true # false  # Отключаем почту для теста
+  enable_sessions: true            # Включаем сессии
+  enable_batch_processing: true   # Включаем пакетную обработку
   email_check_interval: 120
-  batch_check_interval: 3600
+  batch_check_interval: 10        # Проверять папку каждые 10 секунд для теста
   max_emails_per_check: 5
   max_batch_files: 10
   delay_between_requests: 0.5
@@ -38,6 +39,7 @@ email:
   
   # Настройки форматирования ответов
   include_question_in_response: true
+  include_session_in_subject: true  # <-- Включать session_id в тему ответа
   greeting: "Здравствуйте!"
   response_signature: "🤖 Это автоматический ответ от DeepSeek AI."
   response_footer: "Если у вас есть дополнительные вопросы, просто ответьте на это письмо."
@@ -55,9 +57,9 @@ email:
 
 # Настройки пакетной обработки
 batch:
-  input_dir: "requests"
-  output_dir: "responses"
-  json_dir: "responses/json"
+  input_dir: "requests"          # Папка для входных файлов
+  output_dir: "responses"         # Папка для выходных файлов
+  json_dir: "responses/json"      # Папка для JSON ответов
   save_json: true
   save_md: true
   max_filename_length: 50

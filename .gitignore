@@ -75,4 +75,5 @@ Thumbs.db
 # ============================================
 requests/
 responses/
-email_responses
+email_responses/
+data/

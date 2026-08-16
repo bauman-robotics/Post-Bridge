@@ -3,15 +3,15 @@
 
 """
 Модуль для работы с DeepSeek API
-Независимый клиент для отправки запросов
+Использует conversation_id для сессий
 """
 
 import json
 import requests
-from typing import List, Dict, Optional, Generator
+from typing import List, Dict, Optional, Tuple
 
 class DeepSeekClient:
-    """Клиент для DeepSeek API"""
+    """Клиент для DeepSeek API с поддержкой сессий через conversation_id"""
     
     def __init__(self, config: Dict):
         """
@@ -27,6 +27,7 @@ class DeepSeekClient:
     def chat(self, 
              messages: List[Dict[str, str]], 
              stream: bool = False,
+             conversation_id: Optional[str] = None,
              **kwargs) -> Optional[Dict]:
         """
         Отправка запроса к DeepSeek
@@ -34,6 +35,7 @@ class DeepSeekClient:
         Args:
             messages: Список сообщений [{"role": "user", "content": "..."}]
             stream: Использовать потоковый режим
+            conversation_id: ID беседы для продолжения диалога (ВАЖНО!)
             **kwargs: Дополнительные параметры
             
         Returns:
@@ -50,11 +52,19 @@ class DeepSeekClient:
             **kwargs
         }
         
+        # ВАЖНО: используем conversation_id, а не session_id!
+        if conversation_id:
+            payload['conversation_id'] = conversation_id
+        
         # Добавляем расширенные параметры
         if self.config.get('thinking'):
             payload['thinking'] = True
         if self.config.get('search'):
             payload['search'] = True
+        
+        print(f"🔍 Отправка запроса к API: {endpoint}")
+        print(f"   conversation_id: {conversation_id}")
+        print(f"   messages: {len(messages)}")
         
         try:
             response = self.session.post(
@@ -72,17 +82,19 @@ class DeepSeekClient:
     def ask(self, 
             question: str, 
             system_prompt: Optional[str] = None,
-            **kwargs) -> Optional[str]:
+            conversation_id: Optional[str] = None,
+            **kwargs) -> Tuple[Optional[str], Optional[str]]:
         """
         Упрощенный метод для одного вопроса
         
         Args:
             question: Текст вопроса
             system_prompt: Системный промпт
+            conversation_id: ID беседы для продолжения диалога
             **kwargs: Дополнительные параметры
             
         Returns:
-            Текст ответа или None
+            (Текст ответа, Conversation ID) или (None, None)
         """
         messages = []
         
@@ -94,17 +106,21 @@ class DeepSeekClient:
         
         messages.append({"role": "user", "content": question})
         
-        response = self.chat(messages, **kwargs)
+        response = self.chat(messages, conversation_id=conversation_id, **kwargs)
         
         if response and 'choices' in response and response['choices']:
-            return response['choices'][0]['message']['content']
+            answer = response['choices'][0]['message']['content']
+            # Извлекаем conversation_id из ответа
+            new_conversation_id = response.get('conversation_id')
+            return answer, new_conversation_id
         
-        return None
+        return None, None
     
     def ask_with_context(self, 
                          question: str,
                          context: Optional[str] = None,
-                         system_prompt: Optional[str] = None) -> Optional[str]:
+                         system_prompt: Optional[str] = None,
+                         conversation_id: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
         """
         Вопрос с контекстом
         
@@ -112,34 +128,36 @@ class DeepSeekClient:
             question: Вопрос пользователя
             context: Дополнительный контекст
             system_prompt: Системный промпт
+            conversation_id: ID беседы для продолжения диалога
             
         Returns:
-            Текст ответа
+            (Текст ответа, Conversation ID) или (None, None)
         """
         full_question = question
         if context:
             full_question = f"Контекст:\n{context}\n\nВопрос:\n{question}"
         
-        return self.ask(full_question, system_prompt)
+        return self.ask(full_question, system_prompt, conversation_id)
 
 
 # Пример использования
 if __name__ == "__main__":
-    # Тестирование клиента
     import yaml
     
-    with open('config.yaml', 'r') as f:
+    with open('config/config.yaml', 'r') as f:
         config = yaml.safe_load(f)
     
     client = DeepSeekClient(config['deepseek'])
     
-    # Простой вопрос
-    answer = client.ask("Привет! Как дела?")
-    print(f"Ответ: {answer}")
+    # Тест сессии
+    conv_id = None
     
-    # Вопрос с контекстом
-    answer = client.ask_with_context(
-        "Что это за проект?",
-        context="Это скрипт для интеграции DeepSeek с почтой."
-    )
-    print(f"Ответ с контекстом: {answer}")
+    # Первый вопрос
+    answer, conv_id = client.ask("Меня зовут Алексей. Я люблю Python.")
+    print(f"Ответ 1: {answer[:100]}...")
+    print(f"Conversation ID: {conv_id}")
+    
+    # Второй вопрос (должен помнить)
+    answer, conv_id = client.ask("Какое мое любимое хобби?", conversation_id=conv_id)
+    print(f"Ответ 2: {answer[:100]}...")
+    print(f"Conversation ID: {conv_id}")

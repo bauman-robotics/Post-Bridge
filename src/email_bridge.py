@@ -12,9 +12,11 @@ import yaml
 import signal
 import time
 import json
+import re
+import uuid
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 # ================================
 # ОПРЕДЕЛЯЕМ КОРЕНЬ ПРОЕКТА
@@ -41,6 +43,11 @@ class EmailBridge:
         # Инициализируем логгер
         self.logger = get_logger()
         
+        # Загружаем сохраненные сессии
+        self.sessions_file = Path("data/sessions.json")
+        self.sessions_file.parent.mkdir(exist_ok=True, parents=True)
+        self.sessions = self.load_sessions()
+        
         # Выводим конфигурацию при старте
         self.print_config()
         
@@ -57,6 +64,8 @@ class EmailBridge:
         self.stats = {
             'processed': 0,
             'errors': 0,
+            'sessions_continued': 0,
+            'sessions_started': 0,
             'started': datetime.now().isoformat()
         }
     
@@ -120,10 +129,6 @@ class EmailBridge:
                             config['email'][key] = value
                             print(f"   🔐 {key}: загружен из секретов")
                     
-                    # Если есть другие секреты - можно добавить
-                    # if secrets and 'deepseek' in secrets:
-                    #     config['deepseek'].update(secrets['deepseek'])
-                    
                     print("🔐 Секреты загружены")
                     
             except yaml.YAMLError as e:
@@ -143,6 +148,52 @@ class EmailBridge:
         
         return config
     
+    def load_sessions(self) -> Dict:
+        """Загрузка сохраненных сессий"""
+        if self.sessions_file.exists():
+            try:
+                with open(self.sessions_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+    
+    def save_sessions(self):
+        """Сохранение сессий в файл"""
+        try:
+            with open(self.sessions_file, 'w', encoding='utf-8') as f:
+                json.dump(self.sessions, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.error(f"Ошибка сохранения сессий: {e}")
+    
+    def get_session_id_for_sender(self, from_addr: str) -> Optional[str]:
+        """Получение session_id для отправителя"""
+        # Ищем точное совпадение email
+        if from_addr in self.sessions:
+            return self.sessions[from_addr]
+        
+        # Ищем частичное совпадение (например, user@domain.com)
+        for email, session_id in self.sessions.items():
+            if from_addr.lower() in email.lower() or email.lower() in from_addr.lower():
+                return session_id
+        
+        return None
+    
+    def extract_session_id_from_subject(self, subject: str) -> Optional[str]:
+        """Извлечение session_id из темы письма"""
+        if not subject:
+            return None
+        match = re.search(r'\[SID:([a-zA-Z0-9\-_]+)\]', subject)
+        if match:
+            return match.group(1)
+        return None
+    
+    def generate_session_id(self) -> str:
+        """Генерация нового session_id"""
+        # Вместо короткого UUID генерируем полный
+        import uuid
+        return str(uuid.uuid4())  # Полный UUID
+        
     def print_config(self):
         """Вывод конфигурации в консоль и лог"""
         print("\n" + "="*70)
@@ -153,7 +204,12 @@ class EmailBridge:
         print("\n⚙️  ОБЩИЕ НАСТРОЙКИ:")
         print(f"   Режим: {general.get('mode', 'server')}")
         print(f"   Обработка почты: {'✅ Включена' if general.get('enable_email_processing', True) else '❌ Отключена'}")
+        print(f"   Пакетная обработка: {'✅ Включена' if general.get('enable_batch_processing', False) else '❌ Отключена'}")
         print(f"   Интервал проверки: {general.get('email_check_interval', 60)} сек")
+        print(f"   Максимум писем за раз: {general.get('max_emails_per_check', 5)}")
+        print(f"   Сессии: {'✅ Включены' if general.get('enable_sessions', True) else '❌ Отключены'}")
+        if general.get('enable_sessions', True):
+            print(f"   Сохранено сессий: {len(self.sessions)}")
         
         deepseek = self.config.get('deepseek', {})
         print("\n🤖 DEEPSEEK API:")
@@ -167,13 +223,18 @@ class EmailBridge:
         print(f"   SMTP сервер: {email.get('smtp_server', 'Не указан')}")
         print(f"   Пароль: {'✅ Установлен' if email.get('password') else '❌ Не установлен'}")
         
+        batch = self.config.get('batch', {})
+        print("\n📁 ПАКЕТНАЯ ОБРАБОТКА:")
+        print(f"   Входная папка: {batch.get('input_dir', 'requests')}")
+        print(f"   Выходная папка: {batch.get('output_dir', 'responses')}")
+        
         filters = self.config.get('filters', {})
         print("\n🔍 ФИЛЬТРЫ:")
         subject_contains = filters.get('subject_contains', [])
         if subject_contains:
             print(f"   ✅ Обязательные слова в теме: {subject_contains}")
         else:
-            print(f"   ❌ Обязательные слова в теме: НЕ УСТАНОВЛЕНЫ")
+            print(f"   ❌ Обязательные слова в теме: НЕ УСТАНОВЛЕНЫ (все письма проходят)")
         
         print("\n" + "="*70)
         print("✅ Почтовый мост запущен!")
@@ -185,7 +246,114 @@ class EmailBridge:
         self.logger.info("="*70)
         self.logger.info(f"🤖 DeepSeek API: {deepseek.get('api_url', 'http://localhost:8000')}")
         self.logger.info(f"📧 Email: {email.get('username', 'Не указан')}")
+        self.logger.info(f"💾 Сохранено сессий: {len(self.sessions)}")
         self.logger.info("="*70)
+    
+    def process_question_with_session(self, 
+                                     question: str,
+                                     from_addr: str = "batch@local",
+                                     subject: str = "",
+                                     session_id: Optional[str] = None) -> tuple[Optional[str], Optional[str], bool]:
+        """
+        Обработка вопроса с управлением сессией
+        
+        Args:
+            question: Текст вопроса
+            from_addr: Идентификатор отправителя (email или имя файла)
+            subject: Тема (для извлечения session_id)
+            session_id: Переданный session_id (для batch режима)
+            
+        Returns:
+            (ответ, session_id, is_new_session)
+        """
+        enable_sessions = self.config.get('general', {}).get('enable_sessions', True)
+        is_new_session = False
+        used_session_id = None
+        
+        if enable_sessions:
+            # 1. Если передан session_id (для batch режима)
+            if session_id:
+                # Проверяем, существует ли такая сессия
+                if session_id in self.sessions.values():
+                    # Находим владельца сессии
+                    for email, sid in self.sessions.items():
+                        if sid == session_id:
+                            if email == from_addr:
+                                used_session_id = session_id
+                                self.logger.info(f"🔄 Продолжение сессии {session_id} для {from_addr} (из batch)")
+                                print(f"🔄 Продолжение сессии: {session_id}")
+                                self.stats['sessions_continued'] += 1
+                            else:
+                                # Сессия принадлежит другому
+                                self.logger.warning(f"⚠️ Session {session_id} принадлежит {email}, а запрос от {from_addr}. Начинаем новую сессию.")
+                                is_new_session = True
+                else:
+                    # Session ID не найден
+                    self.logger.warning(f"⚠️ Session ID {session_id} не найден. Начинаем новую сессию.")
+                    is_new_session = True
+            
+            # 2. Если нет session_id, пробуем извлечь из subject
+            if not used_session_id and not is_new_session:
+                extracted_sid = self.extract_session_id_from_subject(subject)
+                if extracted_sid:
+                    # Проверяем, существует ли сессия
+                    if extracted_sid in self.sessions.values():
+                        for email, sid in self.sessions.items():
+                            if sid == extracted_sid:
+                                if email == from_addr:
+                                    used_session_id = extracted_sid
+                                    self.logger.info(f"🔄 Продолжение сессии {extracted_sid} для {from_addr} (из темы)")
+                                    print(f"🔄 Продолжение сессии: {extracted_sid}")
+                                    self.stats['sessions_continued'] += 1
+                                else:
+                                    self.logger.warning(f"⚠️ Session {extracted_sid} принадлежит {email}")
+                                    is_new_session = True
+                    else:
+                        self.logger.warning(f"⚠️ Session ID {extracted_sid} не найден")
+                        is_new_session = True
+            
+            # 3. Если нет сессии, проверяем сохраненную для отправителя
+            if not used_session_id and not is_new_session:
+                saved_session = self.get_session_id_for_sender(from_addr)
+                if saved_session:
+                    used_session_id = saved_session
+                    self.logger.info(f"🔄 Продолжение сессии {saved_session} для {from_addr} (из сохраненных)")
+                    print(f"🔄 Продолжение сохраненной сессии: {saved_session}")
+                    self.stats['sessions_continued'] += 1
+                else:
+                    # Начинаем новую сессию - НЕ ГЕНЕРИРУЕМ ID!
+                    is_new_session = True
+                    # used_session_id остается None, API сам создаст conversation_id
+                    self.logger.info(f"✨ Создание новой сессии для {from_addr}")
+                    print(f"✨ Создание новой сессии для {from_addr}")
+                    self.stats['sessions_started'] += 1
+            
+            # Если все еще нет сессии - создаем новую
+            if not used_session_id and is_new_session:
+                # Не генерируем ID! API сам вернет conversation_id
+                # used_session_id остается None, первый запрос будет без conversation_id
+                self.logger.info(f"✨ Создание новой сессии для {from_addr}")
+                print(f"✨ Создание новой сессии для {from_addr}")
+                self.stats['sessions_started'] += 1
+        
+        # Получаем ответ от DeepSeek
+        system_prompt = self.config.get('deepseek', {}).get('system_prompt')
+        answer, new_session_id = self.deepseek.ask(
+            question,
+            system_prompt=system_prompt,
+            conversation_id=used_session_id if enable_sessions else None  # <-- conversation_id вместо session_id
+        )
+        
+        if answer and enable_sessions:
+            # Обновляем session_id если получен новый
+            if new_session_id:
+                used_session_id = new_session_id
+                self.sessions[from_addr] = used_session_id
+                self.save_sessions()
+                self.logger.info(f"💾 Сессия {used_session_id} сохранена для {from_addr}")
+                print(f"💾 Сессия сохранена: {used_session_id}")
+        
+        return answer, used_session_id, is_new_session
     
     def process_email(self, email_data: Dict) -> bool:
         """Обработка одного письма"""
@@ -193,12 +361,13 @@ class EmailBridge:
             question = email_data.get('question', '')
             from_addr = email_data.get('from', '')
             subject = email_data.get('subject', '')
+            email_id = email_data.get('id', '')
             
             if not question:
                 self.logger.warning("Пустой вопрос, пропускаю")
                 return False
             
-            # Проверяем фильтры
+            # Проверяем фильтры (они уже применены в email_reader, но дублируем для надежности)
             filters = self.config.get('filters', {})
             subject_contains = filters.get('subject_contains', [])
             
@@ -219,20 +388,30 @@ class EmailBridge:
             
             self.logger.info(f"Обработка письма от {from_addr}")
             
-            answer = self.deepseek.ask(question)
+            # Обрабатываем вопрос с управлением сессией
+            answer, session_id, is_new_session = self.process_question_with_session(
+                question=question,
+                from_addr=from_addr,
+                subject=subject
+            )
             
             if answer:
                 print(f"✅ Получен ответ ({len(answer)} символов)")
                 self.logger.info(f"✅ Получен ответ от DeepSeek ({len(answer)} символов)")
                 
-                if self.config.get('processing', {}).get('save_responses', True):
-                    self.save_response(email_data, question, answer)
+                # Сохраняем ответ в файл с информацией о сессии
+                processing_config = self.config.get('processing', {})
+                if processing_config.get('save_responses', True):
+                    self.save_response(email_data, question, answer, session_id)
                 
+                # Отправляем ответ с session_id в теме
                 self.email_sender.send_response(
                     to_email=from_addr,
                     question=question,
                     answer=answer,
-                    original_subject=subject
+                    original_subject=subject,
+                    session_id=session_id,
+                    is_new_session=is_new_session
                 )
                 
                 if self.email_reader.imap:
@@ -253,9 +432,11 @@ class EmailBridge:
             print(f"❌ Ошибка обработки письма: {e}")
             self.logger.error(f"❌ Ошибка обработки письма: {e}")
             self.stats['errors'] += 1
+            import traceback
+            traceback.print_exc()
             return False
     
-    def save_response(self, email_data: Dict, question: str, answer: str):
+    def save_response(self, email_data: Dict, question: str, answer: str, session_id: Optional[str] = None):
         """Сохранение ответа в файл"""
         try:
             processing_config = self.config.get('processing', {})
@@ -276,6 +457,7 @@ class EmailBridge:
                     'subject': email_data.get('subject', ''),
                     'question': question,
                     'answer': answer,
+                    'session_id': session_id,
                     'stats': self.stats
                 }
                 json_path = json_dir / f"{filename}.json"
@@ -289,6 +471,7 @@ class EmailBridge:
                     "",
                     f"**Дата:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                     f"**Тема:** {email_data.get('subject', '')}",
+                    f"**Session ID:** {session_id or 'Нет сессии'}",
                     "",
                     "## ❓ Вопрос",
                     "",
@@ -315,6 +498,205 @@ class EmailBridge:
         text = ' '.join(text.split())[:max_len]
         text = re.sub(r'[<>:"/\\|?*]', '_', text)
         return text.rstrip('.') or 'empty'
+    
+    def process_batch_file(self, file_path: Path) -> bool:
+        """
+        Обработка одного файла из папки requests
+        
+        Args:
+            file_path: Путь к файлу с запросом
+            
+        Returns:
+            True если успешно обработано
+        """
+        try:
+            # Читаем файл
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+            
+            if not content:
+                self.logger.warning(f"Пустой файл: {file_path}")
+                return False
+            
+            # Парсим содержимое
+            # Поддерживаем форматы:
+            # 1. Простой текст - весь файл как вопрос
+            # 2. JSON с полями question, session_id, from
+            # 3. Текст с метаданными в начале
+            
+            question = content
+            session_id = None
+            from_addr = file_path.stem  # Имя файла как идентификатор
+            
+            # Пробуем распарсить как JSON
+            try:
+                data = json.loads(content)
+                if isinstance(data, dict):
+                    question = data.get('question', data.get('query', data.get('text', '')))
+                    session_id = data.get('session_id', data.get('sessionId', None))
+                    from_addr = data.get('from', data.get('sender', file_path.stem))
+            except json.JSONDecodeError:
+                # Не JSON, пробуем другие форматы
+                lines = content.split('\n')
+                if len(lines) > 1:
+                    # Проверяем, есть ли метаданные в формате "key: value"
+                    first_line = lines[0].strip()
+                    if ':' in first_line:
+                        # Пробуем найти session_id и отправителя
+                        for line in lines[:5]:  # Проверяем первые 5 строк
+                            if 'session' in line.lower() or 'sid' in line.lower():
+                                parts = line.split(':', 1)
+                                if len(parts) == 2:
+                                    session_id = parts[1].strip()
+                            if 'from' in line.lower() or 'sender' in line.lower():
+                                parts = line.split(':', 1)
+                                if len(parts) == 2:
+                                    from_addr = parts[1].strip()
+                        
+                        # Остальное - вопрос
+                        question = '\n'.join(lines[1:]) if len(lines) > 1 else content
+            
+            if not question:
+                self.logger.warning(f"Не удалось извлечь вопрос из {file_path}")
+                return False
+            
+            print(f"\n📁 Обработка файла: {file_path.name}")
+            print(f"   От: {from_addr}")
+            print(f"   Session: {session_id or 'Нет'}")
+            print(f"   Вопрос: {question[:100]}...")
+            
+            self.logger.info(f"Обработка файла {file_path.name} от {from_addr}")
+            
+            # Обрабатываем вопрос с управлением сессией
+            answer, new_session_id, is_new_session = self.process_question_with_session(
+                question=question,
+                from_addr=from_addr,
+                subject=f"Batch: {file_path.name}",
+                session_id=session_id
+            )
+            
+            if answer:
+                print(f"✅ Получен ответ ({len(answer)} символов)")
+                self.logger.info(f"✅ Получен ответ от DeepSeek ({len(answer)} символов)")
+                
+                # Сохраняем ответ
+                batch_config = self.config.get('batch', {})
+                output_dir = Path(batch_config.get('output_dir', 'responses'))
+                json_dir = Path(batch_config.get('json_dir', 'responses/json'))
+                
+                output_dir.mkdir(exist_ok=True, parents=True)
+                json_dir.mkdir(exist_ok=True, parents=True)
+                
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                base_name = file_path.stem
+                
+                # Сохраняем JSON
+                if batch_config.get('save_json', True):
+                    json_data = {
+                        'timestamp': datetime.now().isoformat(),
+                        'from': from_addr,
+                        'file': file_path.name,
+                        'question': question,
+                        'answer': answer,
+                        'session_id': new_session_id,
+                        'is_new_session': is_new_session,
+                        'stats': self.stats
+                    }
+                    json_path = json_dir / f"{timestamp}_{base_name}.json"
+                    with open(json_path, 'w', encoding='utf-8') as f:
+                        json.dump(json_data, f, ensure_ascii=False, indent=2)
+                    print(f"   💾 Сохранено JSON: {json_path}")
+                
+                # Сохраняем MD
+                if batch_config.get('save_md', True):
+                    md_content = [
+                        f"# Ответ на запрос из {file_path.name}",
+                        "",
+                        f"**Дата:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                        f"**От:** {from_addr}",
+                        f"**Session ID:** {new_session_id or 'Нет сессии'}",
+                        f"**Новая сессия:** {'Да' if is_new_session else 'Нет'}",
+                        "",
+                        "## ❓ Вопрос",
+                        "",
+                        question,
+                        "",
+                        "## 💬 Ответ",
+                        "",
+                        answer,
+                        "",
+                        "---",
+                        f"*Обработано: {datetime.now().isoformat()}*"
+                    ]
+                    md_path = output_dir / f"{timestamp}_{base_name}.md"
+                    with open(md_path, 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(md_content))
+                    print(f"   💾 Сохранено MD: {md_path}")
+                
+                # Перемещаем обработанный файл
+                processed_dir = output_dir / 'processed'
+                processed_dir.mkdir(exist_ok=True)
+                processed_path = processed_dir / file_path.name
+                file_path.rename(processed_path)
+                print(f"   📁 Файл перемещен в processed/")
+                
+                self.stats['processed'] += 1
+                return True
+            else:
+                print("❌ Не удалось получить ответ от DeepSeek")
+                self.logger.error(f"❌ Не удалось получить ответ для {file_path}")
+                self.stats['errors'] += 1
+                return False
+                
+        except Exception as e:
+            print(f"❌ Ошибка обработки файла {file_path}: {e}")
+            self.logger.error(f"❌ Ошибка обработки файла {file_path}: {e}")
+            self.stats['errors'] += 1
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def run_batch_processing(self) -> int:
+        """Пакетная обработка файлов из папки requests"""
+        if not self.config.get('general', {}).get('enable_batch_processing', False):
+            return 0
+        
+        batch_config = self.config.get('batch', {})
+        input_dir = Path(batch_config.get('input_dir', 'requests'))
+        
+        if not input_dir.exists():
+            return 0
+        
+        # Ищем файлы для обработки
+        files = list(input_dir.glob('*'))
+        if not files:
+            return 0
+        
+        # Фильтруем только файлы (не папки)
+        files = [f for f in files if f.is_file()]
+        
+        # Исключаем уже обработанные (если есть маркер)
+        files = [f for f in files if not f.suffix == '.processed']
+        
+        if not files:
+            return 0
+        
+        max_files = self.config.get('general', {}).get('max_batch_files', 10)
+        if len(files) > max_files:
+            files = files[:max_files]
+            self.logger.info(f"Ограничение на обработку: {max_files} файлов")
+        
+        print(f"\n📁 Найдено файлов для пакетной обработки: {len(files)}")
+        self.logger.info(f"📁 Найдено файлов для пакетной обработки: {len(files)}")
+        
+        processed = 0
+        for file_path in files:
+            if self.process_batch_file(file_path):
+                processed += 1
+            delay = self.config.get('general', {}).get('delay_between_requests', 0.5)
+            time.sleep(delay)
+        
+        return processed
     
     def run_email_processing(self) -> int:
         """Одноразовая проверка почты"""
@@ -361,22 +743,38 @@ class EmailBridge:
     
     def run_once(self) -> int:
         """Одноразовая проверка"""
-        return self.run_email_processing()
+        total = 0
+        total += self.run_email_processing()
+        total += self.run_batch_processing()
+        return total
     
     def run_forever(self):
-        """Бесконечный цикл проверки почты"""
+        """Бесконечный цикл проверки"""
         general = self.config.get('general', {})
         email_interval = general.get('email_check_interval', 60)
+        batch_interval = general.get('batch_check_interval', 3600)
         
         print("🚀 Запуск почтового моста")
         print(f"📧 Почта: {self.config.get('email', {}).get('username', '')}")
         print(f"🤖 Модель: {self.config.get('deepseek', {}).get('model', 'deepseek-chat')}")
         print("="*50)
         
+        last_batch_check = 0
+        
         while self.running:
             try:
-                self.run_email_processing()
+                # Проверка почты
+                if general.get('enable_email_processing', True):
+                    self.run_email_processing()
                 
+                # Пакетная обработка
+                if general.get('enable_batch_processing', False):
+                    current_time = time.time()
+                    if current_time - last_batch_check >= batch_interval:
+                        self.run_batch_processing()
+                        last_batch_check = current_time
+                
+                # Ожидание
                 for _ in range(email_interval):
                     if not self.running:
                         break
@@ -388,12 +786,16 @@ class EmailBridge:
                 time.sleep(10)
         
         print("\n📊 ИТОГОВАЯ СТАТИСТИКА")
-        print(f"   Обработано писем: {self.stats['processed']}")
+        print(f"   Обработано запросов: {self.stats['processed']}")
         print(f"   Ошибок: {self.stats['errors']}")
+        print(f"   Начато сессий: {self.stats['sessions_started']}")
+        print(f"   Продолжено сессий: {self.stats['sessions_continued']}")
         print(f"   Запущен: {self.stats['started']}")
         self.logger.info("📊 ИТОГОВАЯ СТАТИСТИКА")
-        self.logger.info(f"   Обработано писем: {self.stats['processed']}")
+        self.logger.info(f"   Обработано запросов: {self.stats['processed']}")
         self.logger.info(f"   Ошибок: {self.stats['errors']}")
+        self.logger.info(f"   Начато сессий: {self.stats['sessions_started']}")
+        self.logger.info(f"   Продолжено сессий: {self.stats['sessions_continued']}")
         print("👋 Завершение работы")
         self.logger.info("👋 Завершение работы")
 
@@ -405,12 +807,19 @@ def main():
 Использование: python src/email_bridge.py [опции]
 
 Опции:
-  --once    - Одноразовая проверка почты
+  --once    - Одноразовая проверка почты и пакетов
   --help    - Показать справку
 
 Конфигурация:
   config/config.yaml  - Основной конфиг (публичная часть)
   config/secrets.yaml - Секреты (НЕ в git!)
+
+Пакетная обработка:
+  Поместите файлы с запросами в папку requests/
+  Поддерживаемые форматы:
+    - Простой текст (весь файл как вопрос)
+    - JSON с полями question, session_id, from
+    - Текст с метаданными в первых строках
         """)
         return
     
