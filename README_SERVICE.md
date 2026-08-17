@@ -7,68 +7,84 @@
 ```bash
 sudo nano /etc/systemd/system/post-bridge.service
 #=========================
+#===========================================
 
+Сервис для DeepSeek сервера:
+===
+cat > /etc/systemd/system/deepseek-server.service << 'EOF'
 [Unit]
-[Unit]
-Description=Post Bridge - DeepSeek Email Bridge
+Description=DeepSeek API Server
 After=network.target
-Wants=network-online.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
 User=root
-WorkingDirectory=/root/Post-Bridge/scripts
-ExecStart=/root/Post-Bridge/scripts/01_run___server_and_client____run_all.sh
-ExecStop=/root/Post-Bridge/scripts/03_stop_client__bridge.sh --force
-ExecStopPost=/root/Post-Bridge/scripts/02_stop_server.sh 8001 --force
+WorkingDirectory=/root/Post-Bridge/Deepseek-API
+Environment="PATH=/root/Post-Bridge/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/root/Post-Bridge/venv/bin/python app.py
+ExecStop=/bin/kill -15 $MAINPID
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/root/Post-Bridge/logs/deepseek_server.log
+StandardError=append:/root/Post-Bridge/logs/deepseek_server_error.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+===========================================
+
+2️⃣ Сервис для почтового моста:
+===
+cat > /etc/systemd/system/post-bridge.service << 'EOF'
+[Unit]
+Description=Post Bridge - DeepSeek Email Bridge
+After=network.target deepseek-server.service
+Requires=deepseek-server.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Post-Bridge
+Environment="PATH=/root/Post-Bridge/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/root/Post-Bridge/venv/bin/python /root/Post-Bridge/src/email_bridge.py
+ExecStop=/bin/kill -15 $MAINPID
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/root/Post-Bridge/logs/service.log
 StandardError=append:/root/Post-Bridge/logs/service_error.log
-TimeoutStartSec=60
-TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target
+EOF
+==========================
 
-#=========================
 
-🚀 Запуск и управление
-1. Перечитать конфигурацию systemd
-bash
+# Остановить всё
+systemctl stop post-bridge 2>/dev/null
+pkill -f "app.py"
+pkill -f "email_bridge.py"
 
+# Перезагрузить systemd
 systemctl daemon-reload
 
-2. Включить автозапуск при старте системы
-bash
-
+# Включить и запустить
+systemctl enable deepseek-server
 systemctl enable post-bridge
-
-3. Запустить сервис
-bash
-
+systemctl start deepseek-server
 systemctl start post-bridge
 
-4. Проверить статус
-bash
-
+# Проверить статус
+systemctl status deepseek-server
 systemctl status post-bridge
 
-5. Остановить сервис
-bash
+# Проверить процессы
+ps aux | grep -E "app.py|email_bridge" | grep -v grep
 
-systemctl stop post-bridge
+======================================================================
 
-6. Перезапустить сервис
-bash
-
-systemctl restart post-bridge
-
-7. Отключить автозапуск
-bash
-
-systemctl disable post-bridge
 
 📊 Диагностика
 Проверка логов
@@ -227,3 +243,5 @@ rm /etc/systemd/system/post-bridge.service
 
 # 3. Перечитать конфигурацию
 systemctl daemon-reload
+
+
