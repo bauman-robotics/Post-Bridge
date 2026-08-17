@@ -78,3 +78,4 @@ responses/
 email_responses/
 data/
 Diagnostics_info.md
+remote_check_post_brige_status.sh
