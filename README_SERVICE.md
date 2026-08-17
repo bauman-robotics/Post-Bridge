@@ -76,6 +76,8 @@ systemctl enable post-bridge
 systemctl start deepseek-server
 systemctl start post-bridge
 
+systemctl restart post-bridge   
+
 # Проверить статус
 systemctl status deepseek-server
 systemctl status post-bridge
@@ -84,6 +86,12 @@ systemctl status post-bridge
 ps aux | grep -E "app.py|email_bridge" | grep -v grep
 
 ======================================================================
+
+tail -100 /root/Post-Bridge/logs/service.log
+tail -100 /root/Post-Bridge/logs/deepseek_server.log
+tail -100 /root/Post-Bridge/logs/service.log
+tail -100 /root/Post-Bridge/logs/deepseek_server_error.log
+
 
 
 📊 Диагностика
