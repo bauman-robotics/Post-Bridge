@@ -573,6 +573,208 @@ class EmailBridge:
         
         return answer, used_session_id, is_new_session
     
+    def ask(self, 
+            question: str, 
+            system_prompt: Optional[str] = None,
+            conversation_id: Optional[str] = None,
+            **kwargs) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Упрощенный метод для одного вопроса
+        
+        Args:
+            question: Текст вопроса
+            system_prompt: Системный промпт
+            conversation_id: ID беседы для продолжения диалога
+            **kwargs: Дополнительные параметры
+            
+        Returns:
+            (Текст ответа, Conversation ID) или (None, None)
+        """
+        messages = []
+        
+        if system_prompt or self.config.get('system_prompt'):
+            messages.append({
+                "role": "system",
+                "content": system_prompt or self.config.get('system_prompt')
+            })
+        
+        messages.append({"role": "user", "content": question})
+        
+        response = self.chat(messages, conversation_id=conversation_id, **kwargs)
+        
+        if response and 'choices' in response and response['choices']:
+            answer = response['choices'][0]['message']['content']
+            new_conversation_id = response.get('conversation_id')
+            
+            # ===== ВЫВОД ТОКЕНОВ =====
+            if 'usage' in response:
+                usage = response['usage']
+                prompt_tokens = usage.get('prompt_tokens', 0)
+                completion_tokens = usage.get('completion_tokens', 0)
+                total_tokens = usage.get('total_tokens', 0)
+                
+                # Сохраняем для передачи в email_sender
+                self.last_usage = {
+                    'prompt_tokens': prompt_tokens,
+                    'completion_tokens': completion_tokens,
+                    'total_tokens': total_tokens
+                }
+                
+                print(f"📊 Токены: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+                # Логируем в файл
+                if hasattr(self, 'logger'):
+                    self.logger.info(f"📊 Токены: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+            else:
+                self.last_usage = None
+            
+            return answer, new_conversation_id
+        
+        return None, None
+
+
+    def send_response(self, 
+                    to_email: str, 
+                    question: str,
+                    answer: str,
+                    original_subject: str = "",
+                    reply_to: Optional[str] = None,
+                    include_question: Optional[bool] = None,
+                    signature: Optional[str] = None,
+                    session_id: Optional[str] = None,
+                    is_new_session: bool = False,
+                    token_stats: Optional[Dict] = None) -> bool:  # <-- ДОБАВЛЕНО
+        """
+        Отправка ответа на письмо
+        
+        Args:
+            to_email: Email получателя
+            question: Оригинальный вопрос
+            answer: Ответ от DeepSeek
+            original_subject: Оригинальная тема письма
+            reply_to: Email для ответа
+            include_question: Включать ли вопрос в тело письма (если None - берется из конфига)
+            signature: Подпись в конце письма (если None - берется из конфига)
+            session_id: ID сессии для включения в тему
+            is_new_session: Флаг новой сессии
+            token_stats: Статистика токенов (prompt_tokens, completion_tokens, total_tokens)
+            
+        Returns:
+            True если отправлено успешно
+        """
+        if not self.smtp and not self.connect():
+            return False
+        
+        try:
+            # Создаем письмо
+            msg = EmailMessage()
+            
+            # Тема с session_id
+            if self.include_session_in_subject and session_id:
+                session_tag = f"[SID:{session_id}]"
+                
+                if original_subject:
+                    # Если тема уже содержит SID, заменяем его
+                    if re.search(r'\[SID:[a-zA-Z0-9\-_]+\]', original_subject):
+                        subject = re.sub(r'\[SID:[a-zA-Z0-9\-_]+\]', session_tag, original_subject)
+                    else:
+                        if not original_subject.lower().startswith('re:'):
+                            subject = f"Re: {session_tag} {original_subject}"
+                        else:
+                            subject = f"{session_tag} {original_subject}"
+                else:
+                    subject = f"{session_tag} Ответ на ваш запрос"
+            else:
+                if original_subject:
+                    if not original_subject.lower().startswith('re:'):
+                        subject = f"Re: {original_subject}"
+                    else:
+                        subject = original_subject
+                else:
+                    subject = "Ответ на ваш запрос"
+            
+            msg['Subject'] = subject
+            msg['From'] = self.config['username']
+            msg['To'] = to_email
+            
+            # Добавляем In-Reply-To если есть
+            if reply_to:
+                msg['In-Reply-To'] = reply_to
+            
+            # Определяем параметры из конфига если не переданы явно
+            if include_question is None:
+                include_question = self.include_question
+            if signature is None:
+                signature = self.signature
+            
+            # Формируем тело письма
+            body_parts = []
+            
+            # Приветствие
+            greeting = self.config.get('greeting', "Здравствуйте!")
+            body_parts.append(greeting)
+            body_parts.append("")
+            
+            # Информация о сессии
+            if session_id:
+                if is_new_session:
+                    body_parts.append(f"🆕 Начата новая сессия: **{session_id}**")
+                else:
+                    body_parts.append(f"🔄 Продолжение сессии: **{session_id}**")
+                body_parts.append("")
+            
+            # Добавляем вопрос если нужно
+            if include_question:
+                body_parts.append("📝 **Ваш вопрос:**")
+                body_parts.append(question)
+                body_parts.append("")
+            
+            # Ответ
+            body_parts.append("💬 **Ответ:**")
+            body_parts.append(answer)
+            body_parts.append("")
+            
+            # ===== СТАТИСТИКА ТОКЕНОВ =====
+            if token_stats:
+                total = token_stats.get('total_tokens', 0)
+                prompt = token_stats.get('prompt_tokens', 0)
+                completion = token_stats.get('completion_tokens', 0)
+                body_parts.append("---")
+                body_parts.append(f"📊 Токены: {total} (prompt: {prompt}, completion: {completion})")
+                body_parts.append("")
+            
+            # Подпись
+            body_parts.append("---")
+            if signature:
+                body_parts.append(signature)
+            
+            # Дополнительный футер
+            if self.footer:
+                body_parts.append(self.footer)
+            
+            # Дата
+            current_date = datetime.now().strftime('%d.%m.%Y %H:%M')
+            body_parts.append(f"📅 {current_date}")
+            
+            # Склеиваем всё в одно письмо
+            body = '\n'.join(body_parts)
+            
+            msg.set_content(body, charset='utf-8')
+            
+            # Отправляем
+            self.smtp.send_message(msg)
+            print(f"✅ Ответ отправлен на {to_email}")
+            print(f"   📝 Вопрос: {question[:50]}...")
+            print(f"   💬 Ответ: {answer[:50]}...")
+            if session_id:
+                print(f"   🔑 Session: {session_id} {'(новая)' if is_new_session else '(продолжение)'}")
+            if token_stats:
+                print(f"   📊 Токены: {token_stats.get('total_tokens', 0)}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Ошибка отправки письма: {e}")
+            return False
+
     def process_email(self, email_data: Dict) -> bool:
         """Обработка одного письма"""
         try:
@@ -617,10 +819,16 @@ class EmailBridge:
                 print(f"✅ Получен ответ ({len(answer)} символов)")
                 self.logger.info(f"✅ Получен ответ от DeepSeek ({len(answer)} символов)")
                 
+                # ===== ПОЛУЧАЕМ СТАТИСТИКУ ТОКЕНОВ =====
+                token_stats = None
+                if hasattr(self.deepseek, 'last_usage') and self.deepseek.last_usage:
+                    token_stats = self.deepseek.last_usage
+                    self.logger.info(f"📊 Токены: prompt={token_stats.get('prompt_tokens', 0)}, completion={token_stats.get('completion_tokens', 0)}, total={token_stats.get('total_tokens', 0)}")
+                
                 # Сохраняем ответ в файл с информацией о сессии
                 processing_config = self.config.get('processing', {})
                 if processing_config.get('save_responses', True):
-                    self.save_response(email_data, question, answer, session_id)
+                    self.save_response(email_data, question, answer, session_id, token_stats)
                 
                 # Отправляем ответ с session_id в теме
                 self.email_sender.send_response(
@@ -629,7 +837,8 @@ class EmailBridge:
                     answer=answer,
                     original_subject=subject,
                     session_id=session_id,
-                    is_new_session=is_new_session
+                    is_new_session=is_new_session,
+                    token_stats=token_stats  # <-- ПЕРЕДАЕМ ТОКЕНЫ
                 )
                 
                 if self.email_reader.imap:
@@ -654,7 +863,7 @@ class EmailBridge:
             traceback.print_exc()
             return False
     
-    def save_response(self, email_data: Dict, question: str, answer: str, session_id: Optional[str] = None):
+    def save_response(self, email_data: Dict, question: str, answer: str, session_id: Optional[str] = None, token_stats: Optional[Dict] = None):
         """Сохранение ответа в файл"""
         try:
             processing_config = self.config.get('processing', {})
@@ -676,7 +885,8 @@ class EmailBridge:
                     'question': question,
                     'answer': answer,
                     'session_id': session_id,
-                    'stats': self.stats
+                    'stats': self.stats,
+                    'token_stats': token_stats 
                 }
                 json_path = json_dir / f"{filename}.json"
                 with open(json_path, 'w', encoding='utf-8') as f:

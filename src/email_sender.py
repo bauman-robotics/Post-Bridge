@@ -65,7 +65,8 @@ class EmailSender:
                       include_question: Optional[bool] = None,
                       signature: Optional[str] = None,
                       session_id: Optional[str] = None,
-                      is_new_session: bool = False) -> bool:
+                      is_new_session: bool = False,
+                      token_stats: Optional[Dict] = None) -> bool:  # <-- ДОБАВЛЕНО
         """
         Отправка ответа на письмо
         
@@ -79,6 +80,7 @@ class EmailSender:
             signature: Подпись в конце письма (если None - берется из конфига)
             session_id: ID сессии для включения в тему
             is_new_session: Флаг новой сессии
+            token_stats: Статистика токенов (prompt_tokens, completion_tokens, total_tokens)
             
         Returns:
             True если отправлено успешно
@@ -155,6 +157,15 @@ class EmailSender:
             body_parts.append(answer)
             body_parts.append("")
             
+            # ===== СТАТИСТИКА ТОКЕНОВ =====
+            if token_stats:
+                total = token_stats.get('total_tokens', 0)
+                prompt = token_stats.get('prompt_tokens', 0)
+                completion = token_stats.get('completion_tokens', 0)
+                body_parts.append("---")
+                body_parts.append(f"📊 Токены: {total} (prompt: {prompt}, completion: {completion})")
+                body_parts.append("")
+            
             # Подпись
             body_parts.append("---")
             if signature:
@@ -180,12 +191,14 @@ class EmailSender:
             print(f"   💬 Ответ: {answer[:50]}...")
             if session_id:
                 print(f"   🔑 Session: {session_id} {'(новая)' if is_new_session else '(продолжение)'}")
+            if token_stats:
+                print(f"   📊 Токены: {token_stats.get('total_tokens', 0)}")
             return True
             
         except Exception as e:
             print(f"❌ Ошибка отправки письма: {e}")
             return False
-    
+        
     def send_error_response(self,
                            to_email: str,
                            error_msg: str,

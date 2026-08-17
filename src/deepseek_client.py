@@ -110,8 +110,29 @@ class DeepSeekClient:
         
         if response and 'choices' in response and response['choices']:
             answer = response['choices'][0]['message']['content']
-            # Извлекаем conversation_id из ответа
             new_conversation_id = response.get('conversation_id')
+            
+            # ===== ВЫВОД ТОКЕНОВ =====
+            if 'usage' in response:
+                usage = response['usage']
+                prompt_tokens = usage.get('prompt_tokens', 0)
+                completion_tokens = usage.get('completion_tokens', 0)
+                total_tokens = usage.get('total_tokens', 0)
+                
+                # Сохраняем для передачи в email_sender
+                self.last_usage = {
+                    'prompt_tokens': prompt_tokens,
+                    'completion_tokens': completion_tokens,
+                    'total_tokens': total_tokens
+                }
+                
+                print(f"📊 Токены: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+                # Логируем в файл
+                if hasattr(self, 'logger'):
+                    self.logger.info(f"📊 Токены: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+            else:
+                self.last_usage = None
+            
             return answer, new_conversation_id
         
         return None, None
