@@ -44,7 +44,7 @@ class EmailReader:
             socket.setdefaulttimeout(None)
             return True
         except Exception as e:
-            self.logger.error(f"❌ Ошибка подключения к почте: {e}")
+            self.logger.error(f"⚠️ Ошибка подключения к почте: {e}")
             return False
     
     def disconnect(self):
