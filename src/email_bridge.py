@@ -76,20 +76,55 @@ class EmailBridge:
         self.logger.info(f"📡 Режим polling: проверка каждые {interval} сек")
         print(f"📡 Режим polling: проверка каждые {interval} сек")
         
+        consecutive_errors = 0
+        
         while self.running:
             try:
+                # ===== ПРОВЕРКА СОЕДИНЕНИЯ ПЕРЕД ЗАПУСКОМ =====
+                if self.email_reader and not self.email_reader.is_connected():
+                    self.logger.warning("⚠️ IMAP соединение разорвано, переподключаюсь...")
+                    self.email_reader.disconnect()
+                    if not self.email_reader.connect():
+                        self.logger.error("❌ Не удалось переподключиться к IMAP")
+                        time.sleep(10)
+                        continue
+                
+                # Добавляем таймаут
+                import signal
+                
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Operation timed out")
+                
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)
+                
+                # Проверяем почту
                 self.run_email_processing()
                 
-                # Ожидание с возможностью прерывания
+                signal.alarm(0)
+                
+                # Сброс счетчика ошибок
+                consecutive_errors = 0
+                
+                # Ожидание
                 for _ in range(interval):
                     if not self.running:
                         break
                     time.sleep(1)
+                        
+            except TimeoutError:
+                consecutive_errors += 1
+                self.logger.error(f"⏰ Таймаут операции (ошибка #{consecutive_errors})")
+                self.email_reader.disconnect()
+                time.sleep(min(consecutive_errors * 5, 30))
                     
             except Exception as e:
-                self.logger.error(f"❌ Ошибка в polling цикле: {e}")
-                print(f"❌ Ошибка в polling цикле: {e}")
-                time.sleep(10)
+                consecutive_errors += 1
+                self.logger.error(f"❌ Ошибка #{consecutive_errors}: {e}")
+                self.email_reader.disconnect()
+                if not self.running:
+                    break
+                time.sleep(min(consecutive_errors * 5, 30))
 
     def _run_idle_mode(self):
         """Режим IDLE (мгновенная реакция)"""

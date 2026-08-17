@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 import re
 import time
+import socket
 
 # Импортируем логгер
 from logger import get_logger
@@ -26,22 +27,21 @@ class EmailReader:
         self.config = config
         self.imap = None
         self.logger = get_logger()
-        
+
     def connect(self) -> bool:
         try:
             self.logger.info(f"Подключение к IMAP серверу {self.config['imap_server']}")
+            
+            # Устанавливаем таймаут на соединение
+            socket.setdefaulttimeout(30)  # 30 секунд таймаут
+            
             self.imap = imaplib.IMAP4_SSL(self.config['imap_server'])
             self.imap.login(self.config['username'], self.config['password'])
             self.imap.select(self.config.get('check_folder', 'INBOX'))
             self.logger.info("✅ Успешное подключение к почте")
             
-            # ОТЛАДКА
-            import inspect
-            frame = inspect.currentframe().f_back
-            self_obj = frame.f_locals.get('self')
-            if self_obj:
-                print(f"🔍 Внутри connect: self.running = {getattr(self_obj, 'running', 'N/A')}")
-            
+            # Сбрасываем таймаут
+            socket.setdefaulttimeout(None)
             return True
         except Exception as e:
             self.logger.error(f"❌ Ошибка подключения к почте: {e}")
@@ -56,7 +56,17 @@ class EmailReader:
             except:
                 pass
             self.imap = None
-    
+
+    def is_connected(self) -> bool:
+        """Проверка, живо ли IMAP соединение"""
+        if not self.imap:
+            return False
+        try:
+            self.imap.noop() # Отправляем пустую команд
+            return True
+        except:
+            return False
+
     def decode_header_value(self, header: str) -> str:
         if not header:
             return ""
@@ -261,6 +271,7 @@ class EmailReader:
         return True, "OK"
     
     def get_emails(self, limit: Optional[int] = None) -> List[Dict]:
+        """Получение писем из почтового ящика"""
         if not self.imap and not self.connect():
             return []
         
@@ -270,7 +281,13 @@ class EmailReader:
         total_count = 0
         
         try:
+            # Устанавливаем таймаут на операцию
+            socket.setdefaulttimeout(30)
+            
+            self.logger.debug("📡 Поиск непрочитанных писем...")
             status, messages = self.imap.search(None, 'UNSEEN')
+            
+            socket.setdefaulttimeout(None)
             
             if status != 'OK' or not messages[0]:
                 self.logger.debug("Новых непрочитанных писем нет")
@@ -355,13 +372,23 @@ class EmailReader:
                     if self.config.get('mark_as_read', True):
                         self.imap.store(email_id, '+FLAGS', '\\Seen')
                     
+                except socket.timeout:
+                    self.logger.error(f"⏰ Таймаут при обработке письма {email_id}")
+                    error_count += 1
+                    continue
                 except Exception as e:
                     error_count += 1
                     self.logger.error(f"Ошибка обработки письма {email_id}: {e}")
                     continue
             
+        except socket.timeout:
+            self.logger.error("⏰ Таймаут IMAP операции, переподключаюсь...")
+            self.disconnect()
+            self.connect()
+            return []
         except Exception as e:
             self.logger.error(f"❌ Ошибка получения писем: {e}")
+            return []
         
         self.logger.info(f"📊 Статистика: Всего {total_count} | Обработано {len(emails)} | Отфильтровано {filtered_count} | Ошибок {error_count}")
         
