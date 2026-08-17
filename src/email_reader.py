@@ -85,26 +85,49 @@ class EmailReader:
         return ' '.join(result)
     
     def get_email_body(self, msg) -> str:
+        """
+        Извлечение тела письма.
+        Берет только text/plain, если нет - text/html.
+        """
         body = ""
+        
         if msg.is_multipart():
+            # Сначала ищем text/plain
             for part in msg.walk():
                 content_type = part.get_content_type()
                 content_disposition = str(part.get("Content-Disposition"))
-                if content_type in ["text/plain", "text/html"] and "attachment" not in content_disposition:
+                if content_type == "text/plain" and "attachment" not in content_disposition:
                     try:
                         payload = part.get_payload(decode=True)
                         charset = part.get_content_charset() or 'utf-8'
-                        body += payload.decode(charset, errors='ignore')
-                    except Exception as e:
-                        self.logger.debug(f"Ошибка декодирования части письма: {e}")
+                        body = payload.decode(charset, errors='ignore')
+                        return body.strip()  # Возвращаем сразу, как нашли text/plain
+                    except:
+                        pass
+            
+            # Если text/plain нет - ищем text/html
+            for part in msg.walk():
+                content_type = part.get_content_type()
+                content_disposition = str(part.get("Content-Disposition"))
+                if content_type == "text/html" and "attachment" not in content_disposition:
+                    try:
+                        payload = part.get_payload(decode=True)
+                        charset = part.get_content_charset() or 'utf-8'
+                        body = payload.decode(charset, errors='ignore')
+                        return self.clean_html(body)  # Очищаем от HTML
+                    except:
+                        pass
         else:
+            # Не multipart письмо
             try:
                 payload = msg.get_payload(decode=True)
                 charset = msg.get_content_charset() or 'utf-8'
                 body = payload.decode(charset, errors='ignore')
-            except Exception as e:
-                self.logger.debug(f"Ошибка декодирования письма: {e}")
+                return body.strip()
+            except:
                 body = str(msg.get_payload())
+                return body.strip()
+        
         return body.strip()
     
     def clean_html(self, text: str) -> str:
