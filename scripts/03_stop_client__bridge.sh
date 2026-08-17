@@ -147,7 +147,7 @@ case "$1" in
         echo "  ⚡ ПРИНУДИТЕЛЬНАЯ ОСТАНОВКА МОСТА"
         print_header
         
-        local pids=$(find_bridge_pids)
+        pids=$(find_bridge_pids)
         if [ -n "$pids" ]; then
             for pid in $pids; do
                 print_info "Убиваю процесс (PID: $pid)..."
@@ -166,7 +166,7 @@ case "$1" in
         echo "  💀 УБИЙСТВО ВСЕХ ПРОЦЕССОВ МОСТА"
         print_header
         
-        local pids=$(find_bridge_pids)
+        pids=$(find_bridge_pids)
         if [ -n "$pids" ]; then
             for pid in $pids; do
                 print_info "Убиваю процесс (PID: $pid)..."
@@ -181,7 +181,7 @@ case "$1" in
     
     -s|--status)
         # Проверить статус
-        local pid=$(find_bridge_pid)
+        pid=$(find_bridge_pid)
         if [ -n "$pid" ]; then
             echo -e "${GREEN}✅ Мост запущен (PID: $pid)${NC}"
             echo "   Время работы: $(ps -p "$pid" -o etime= 2>/dev/null | xargs)"
