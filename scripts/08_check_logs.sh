@@ -88,8 +88,8 @@ check_logs() {
     check_file "$LOG_DIR/bridge.log" "$lines"
     
     # ===== 2. ДИПСИК БРИДЖ ЛОГ =====
-    print_section "2. DEEPSEEK БРИДЖ (deepseek_bridge.log)"
-    check_file "$LOG_DIR/deepseek_bridge.log" "$lines"
+    #print_section "2. DEEPSEEK БРИДЖ (deepseek_bridge.log)"
+    #check_file "$LOG_DIR/deepseek_bridge.log" "$lines"
     
     # ===== 3. ДНЕВНОЙ ЛОГ БРИДЖА =====
     print_section "3. ДНЕВНОЙ ЛОГ БРИДЖА (deepseek_bridge_$DATE.log)"
@@ -113,6 +113,7 @@ check_logs() {
         echo "   CPU: $(ps -p $PID -o %cpu= 2>/dev/null | xargs)%"
         echo "   RAM: $(ps -p $PID -o %mem= 2>/dev/null | xargs)%"
         echo "   Время работы: $(ps -p $PID -o etime= 2>/dev/null | xargs)"
+        echo "   Время запуска: $(ps -p $PID -o lstart= 2>/dev/null | xargs)" 
     else
         print_error "❌ Мост НЕ ЗАПУЩЕН"
     fi
@@ -126,6 +127,7 @@ check_logs() {
         echo "   CPU: $(ps -p $PID -o %cpu= 2>/dev/null | xargs)%"
         echo "   RAM: $(ps -p $PID -o %mem= 2>/dev/null | xargs)%"
         echo "   Время работы: $(ps -p $PID -o etime= 2>/dev/null | xargs)"
+        echo "   Время запуска: $(ps -p $PID -o lstart= 2>/dev/null | xargs)" 
     else
         print_error "❌ Сервер НЕ ЗАПУЩЕН"
     fi
