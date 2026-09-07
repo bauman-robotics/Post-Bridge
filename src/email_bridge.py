@@ -455,19 +455,14 @@ class EmailBridge:
         print("✅ Почтовый мост запущен!")
         print("="*70 + "\n")
         
-        # ===== ДОБАВИТЬ: ПРОВЕРКА ПАПОК ПРИ СТАРТЕ =====
+        # ===== ПРОВЕРКА ПАПОК ПРИ СТАРТЕ (синхронно) =====
         if self.config.get('general', {}).get('enable_email_processing', True):
-            # Небольшая задержка для установки соединения
-            import threading
-            def delayed_check():
-                time.sleep(2)
+            try:
                 if self.email_reader and self.email_reader.connect():
                     self.check_missing_emails()
                     self.email_reader.disconnect()
-            
-            thread = threading.Thread(target=delayed_check)
-            thread.daemon = True
-            thread.start()
+            except Exception as e:
+                self.logger.debug(f"Проверка папок при старте: {e}")
 
         # Записываем в лог
         self.logger.info("="*70)
