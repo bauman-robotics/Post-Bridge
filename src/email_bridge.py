@@ -455,6 +455,20 @@ class EmailBridge:
         print("✅ Почтовый мост запущен!")
         print("="*70 + "\n")
         
+        # ===== ДОБАВИТЬ: ПРОВЕРКА ПАПОК ПРИ СТАРТЕ =====
+        if self.config.get('general', {}).get('enable_email_processing', True):
+            # Небольшая задержка для установки соединения
+            import threading
+            def delayed_check():
+                time.sleep(2)
+                if self.email_reader and self.email_reader.connect():
+                    self.check_missing_emails()
+                    self.email_reader.disconnect()
+            
+            thread = threading.Thread(target=delayed_check)
+            thread.daemon = True
+            thread.start()
+
         # Записываем в лог
         self.logger.info("="*70)
         self.logger.info("🚀 ЗАПУСК ПОЧТОВОГО МОСТА")
@@ -1146,6 +1160,15 @@ class EmailBridge:
             if not emails:
                 print("📭 Новых писем нет")
                 self.logger.info("📭 Новых писем нет")
+                
+                # ===== ДИАГНОСТИКА: проверяем раз в час =====
+                if not hasattr(self, '_diag_counter'):
+                    self._diag_counter = 0
+                self._diag_counter += 1
+                
+                if self._diag_counter % 60 == 0:  # Каждый час (60 циклов по 60 сек)
+                    self.check_missing_emails()
+                
                 return 0
             
             print(f"📨 Найдено новых писем: {len(emails)}")
@@ -1163,7 +1186,20 @@ class EmailBridge:
                 delay = self.config.get('general', {}).get('delay_between_requests', 0.5)
                 time.sleep(delay)
             
+            # ===== ДИАГНОСТИКА ПОСЛЕ ОБРАБОТКИ =====
+            # Проверяем, не потерялись ли письма
+            self.check_missing_emails()
+            
+            # Сбрасываем счетчик диагностики (чтобы следующая проверка была через час)
+            if hasattr(self, '_diag_counter'):
+                self._diag_counter = 0
+            
             return processed
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка в run_email_processing: {e}")
+            print(f"❌ Ошибка: {e}")
+            return 0
             
         finally:
             self.email_reader.disconnect()
@@ -1174,8 +1210,12 @@ class EmailBridge:
         total = 0
         total += self.run_email_processing()
         total += self.run_batch_processing()
+        
+        # ===== ДОБАВИТЬ: ДИАГНОСТИКА ПОСЛЕ ОДНОРАЗОВОЙ ПРОВЕРКИ =====
+        self.check_missing_emails()
+        
         return total
-    
+        
     def run_forever(self):
         """Бесконечный цикл с выбором режима ожидания"""
         general = self.config.get('general', {})
@@ -1194,36 +1234,187 @@ class EmailBridge:
         else:
             self._run_polling_mode()
 
+    def check_missing_emails(self):
+        """Проверка потерянных писем"""
+        print("\n" + "="*70)
+        print("🔍 ДИАГНОСТИКА ПОТЕРЯННЫХ ПИСЕМ")
+        print("="*70)
+        
+        # Проверяем, есть ли соединение
+        if not self.email_reader or not self.email_reader.imap:
+            print("⚠️ Нет соединения с IMAP, подключаюсь...")
+            if not self.email_reader.connect():
+                print("❌ Не удалось подключиться")
+                return
+        
+        try:
+            # ===== ПРОВЕРКА ПАПКИ FILTERED =====
+            try:
+                self.email_reader.imap.select('Filtered')
+                status, messages = self.email_reader.imap.search(None, 'ALL')
+                if status == 'OK' and messages[0]:
+                    filtered_count = len(messages[0].split())
+                    print(f"📁 Писем в папке Filtered: {filtered_count}")
+                    
+                    # Показываем первые 5
+                    for i, email_id in enumerate(messages[0].split()[:5], 1):
+                        try:
+                            status, data = self.email_reader.imap.fetch(
+                                email_id, 
+                                '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])'
+                            )
+                            if status == 'OK':
+                                header = data[0][1].decode()
+                                lines = header.strip().split('\n')
+                                from_line = next((l for l in lines if l.startswith('From:')), 'From: ?')
+                                subject_line = next((l for l in lines if l.startswith('Subject:')), 'Subject: ?')
+                                date_line = next((l for l in lines if l.startswith('Date:')), 'Date: ?')
+                                
+                                print(f"   {i}. {from_line[:60]}")
+                                print(f"      {subject_line[:60]}")
+                        except Exception as e:
+                            print(f"   {i}. Ошибка чтения: {e}")
+                    
+                    if filtered_count > 5:
+                        print(f"   ... и еще {filtered_count - 5} писем")
+                else:
+                    print("📁 Папка Filtered пуста")
+            except Exception as e:
+                print(f"⚠️ Ошибка проверки Filtered: {e}")
+            
+            # ===== ПРОВЕРКА ПАПКИ ERRORS =====
+            try:
+                self.email_reader.imap.select('Errors')
+                status, messages = self.email_reader.imap.search(None, 'ALL')
+                if status == 'OK' and messages[0]:
+                    errors_count = len(messages[0].split())
+                    print(f"📁 Писем в папке Errors: {errors_count}")
+                    
+                    # Показываем первые 3
+                    for i, email_id in enumerate(messages[0].split()[:3], 1):
+                        try:
+                            status, data = self.email_reader.imap.fetch(
+                                email_id, 
+                                '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM)])'
+                            )
+                            if status == 'OK':
+                                header = data[0][1].decode()
+                                subject_line = next((l for l in header.split('\n') if l.startswith('Subject:')), 'Subject: ?')
+                                print(f"   {i}. {subject_line[:60]}")
+                        except:
+                            pass
+                    
+                    if errors_count > 3:
+                        print(f"   ... и еще {errors_count - 3} писем")
+                else:
+                    print("📁 Папка Errors пуста")
+            except Exception as e:
+                print(f"⚠️ Ошибка проверки Errors: {e}")
+            
+            # ===== ПРОВЕРКА INBOX =====
+            try:
+                self.email_reader.imap.select('INBOX')
+                status, messages = self.email_reader.imap.search(None, 'ALL')
+                if status == 'OK' and messages[0]:
+                    total = len(messages[0].split())
+                    
+                    # Проверяем непрочитанные
+                    status, unseen = self.email_reader.imap.search(None, 'UNSEEN')
+                    unseen_count = len(unseen[0].split()) if unseen and unseen[0] else 0
+                    
+                    print(f"📁 INBOX: всего {total} писем, непрочитанных: {unseen_count}")
+                else:
+                    print("📁 INBOX пуста")
+            except Exception as e:
+                print(f"⚠️ Ошибка проверки INBOX: {e}")
+            
+            # ===== ПРОВЕРКА ЛОГОВ =====
+            print("\n📋 ПОСЛЕДНИЕ СОБЫТИЯ ИЗ ЛОГА:")
+            log_file = Path("logs") / "deepseek_bridge.log"
+            if log_file.exists():
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                        # Последние 15 строк с важными событиями
+                        important_lines = []
+                        for line in lines[-50:]:
+                            if any(keyword in line for keyword in ['FILTERED', 'ERROR', '⚠️', '❌', 'отфильтрован']):
+                                important_lines.append(line.strip())
+                        
+                        if important_lines:
+                            for line in important_lines[-10:]:
+                                print(f"   {line}")
+                        else:
+                            print("   ✅ Нет ошибок или фильтраций")
+                except Exception as e:
+                    print(f"   ⚠️ Ошибка чтения лога: {e}")
+            else:
+                print("   ⚠️ Файл лога не найден")
+            
+            # ===== ДИАГНОСТИКА SESSION ID =====
+            print("\n🔑 АКТИВНЫЕ СЕССИИ:")
+            if self.sessions:
+                for email, sessions in self.sessions.items():
+                    print(f"   {email}: {len(sessions)} сессий")
+                    if sessions:
+                        print(f"      Последняя: {sessions[-1][:20]}...")
+            else:
+                print("   Нет активных сессий")
+            
+            # ===== СОВЕТЫ =====
+            print("\n💡 СОВЕТЫ ПО ВОССТАНОВЛЕНИЮ:")
+            print("   Для просмотра всех писем в Filtered:")
+            print("     python src/email_bridge.py --check")
+            print("   Для восстановления писем из Filtered:")
+            print("     python src/email_bridge.py --recover")
+            
+        except Exception as e:
+            print(f"❌ Ошибка диагностики: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # Не отключаемся от IMAP, т.к. соединение может использоваться
+            pass
+        
+        print("="*70 + "\n")
+
 def main():
     """Точка входа"""
     if len(sys.argv) > 1 and sys.argv[1] == '--help':
         print("""
-Использование: python src/email_bridge.py [опции]
+        Использование: python src/email_bridge.py [опции]
 
-Опции:
-  --once    - Одноразовая проверка почты и пакетов
-  --help    - Показать справку
+        Опции:
+          --once        - Одноразовая проверка почты и пакетов
+          --check       - Проверить состояние папок и потерянные письма
+          --recover     - Восстановить письма из Filtered
+          --help        - Показать справку
 
-Конфигурация:
-  config/config.yaml  - Основной конфиг (публичная часть)
-  config/secrets.yaml - Секреты (НЕ в git!)
+        Конфигурация:
+          config/config.yaml  - Основной конфиг (публичная часть)
+          config/secrets.yaml - Секреты (НЕ в git!)
 
-Пакетная обработка:
-  Поместите файлы с запросами в папку requests/
-  Поддерживаемые форматы:
-    - Простой текст (весь файл как вопрос)
-    - JSON с полями question, session_id, from
-    - Текст с метаданными в первых строках
-        """)
+        Пакетная обработка:
+          Поместите файлы с запросами в папку requests/
+          Поддерживаемые форматы:
+            - Простой текст (весь файл как вопрос)
+            - JSON с полями question, session_id, from
+            - Текст с метаданными в первых строках
+                """)
         return
     
+    # ===== ИСПРАВЛЕНО: убрать лишний отступ =====
     bridge = EmailBridge()
     
-    if len(sys.argv) > 1 and sys.argv[1] == '--once':
-        bridge.run_once()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--once':
+            bridge.run_once()
+        elif sys.argv[1] == '--check':
+            bridge.check_missing_emails()
+        elif sys.argv[1] == '--recover':
+            from recover_filtered import main as recover_main
+            recover_main()
+        else:
+            bridge.run_forever()
     else:
         bridge.run_forever()
-
-
-if __name__ == "__main__":
-    main()

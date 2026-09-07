@@ -16,6 +16,7 @@ from typing import List, Dict, Optional, Tuple
 import re
 import time
 import socket
+import json 
 
 # Импортируем логгер
 from logger import get_logger
@@ -27,6 +28,21 @@ class EmailReader:
         self.config = config
         self.imap = None
         self.logger = get_logger()
+        
+        # ===== ДОБАВИМ ДИАГНОСТИКУ =====
+        self.diagnostics = {
+            'total_emails': 0,
+            'fetch_errors': 0,
+            'filtered': 0,
+            'filter_reasons': {},
+            'empty_questions': 0,
+            'processed': 0,
+            'session_ids_found': 0,
+            'emails_by_folder': {},
+            'last_check': None
+        }
+        self.debug_file = Path("logs/email_diagnostics.json")
+        self.debug_file.parent.mkdir(exist_ok=True)
 
     def connect(self) -> bool:
         try:
@@ -292,9 +308,9 @@ class EmailReader:
                     return False, f"В теме есть запрещенное слово: '{forbidden}'"
         
         return True, "OK"
-    
+        
     def get_emails(self, limit: Optional[int] = None) -> List[Dict]:
-        """Получение писем из почтового ящика"""
+        """Получение писем с ДИАГНОСТИКОЙ"""
         if not self.imap and not self.connect():
             return []
         
@@ -303,8 +319,10 @@ class EmailReader:
         error_count = 0
         total_count = 0
         
+        # ===== ДИАГНОСТИКА: логируем состояние папок =====
+        self.log_folder_status()
+        
         try:
-            # Устанавливаем таймаут на операцию
             socket.setdefaulttimeout(30)
             
             self.logger.debug("📡 Поиск непрочитанных писем...")
@@ -314,22 +332,33 @@ class EmailReader:
             
             if status != 'OK' or not messages[0]:
                 self.logger.debug("Новых непрочитанных писем нет")
+                # ===== ДИАГНОСТИКА: проверяем есть ли прочитанные =====
+                self.check_all_emails_count()
                 return []
             
             email_ids = messages[0].split()
             total_count = len(email_ids)
             self.logger.info(f"📨 Найдено непрочитанных писем: {total_count}")
             
+            # ===== ДИАГНОСТИКА: логируем ID всех писем =====
+            self.logger.debug(f"📋 ID писем: {[eid.decode() if isinstance(eid, bytes) else str(eid) for eid in email_ids]}")
+            
             if limit and len(email_ids) > limit:
                 email_ids = email_ids[-limit:]
                 self.logger.debug(f"Ограничение на обработку: {limit} писем")
             
             for email_id in reversed(email_ids):
+                email_id_str = email_id.decode() if isinstance(email_id, bytes) else str(email_id)
+                
+                # ===== ДИАГНОСТИКА: начало обработки письма =====
+                self.logger.debug(f"🔍 Начало обработки письма {email_id_str}")
+                
                 try:
                     status, msg_data = self.imap.fetch(email_id, '(RFC822)')
                     
                     if status != 'OK' or not msg_data:
                         error_count += 1
+                        self.logger.error(f"❌ Не удалось получить письмо {email_id_str}: status={status}")
                         continue
                     
                     msg = email.message_from_bytes(msg_data[0][1])
@@ -337,6 +366,11 @@ class EmailReader:
                     subject = self.decode_header_value(msg.get('Subject', ''))
                     from_addr = self.decode_header_value(msg.get('From', ''))
                     date_str = msg.get('Date', '')
+                    
+                    # ===== ДИАГНОСТИКА: информация о письме =====
+                    self.logger.debug(f"📧 Письмо {email_id_str}:")
+                    self.logger.debug(f"   От: {from_addr}")
+                    self.logger.debug(f"   Тема: {subject}")
                     
                     try:
                         date = parsedate_to_datetime(date_str)
@@ -347,42 +381,74 @@ class EmailReader:
                     question = self.extract_question(body)
                     
                     session_id = self.extract_session_id(subject)
-                    
-                    subject_display = subject[:50] + "..." if len(subject) > 50 else subject
-                    self.logger.debug(f"Обработка письма от {from_addr} | Тема: '{subject_display}'")
                     if session_id:
-                        self.logger.debug(f"   🔑 Session ID: {session_id}")
+                        self.logger.debug(f"   🔑 SID: {session_id}")
+                    
+                    # ===== ДИАГНОСТИКА: содержимое =====
+                    body_len = len(body)
+                    question_len = len(question)
+                    self.logger.debug(f"   📄 Тело: {body_len} символов, Вопрос: {question_len} символов")
+                    
+                    if not question or not question.strip():
+                        self.logger.warning(f"⚠️ Письмо {email_id_str} содержит пустой вопрос")
+                        self.logger.debug(f"   Тело (первые 200 символов): {body[:200]}")
+                        
+                        # ===== ДИАГНОСТИКА: сохраняем проблемное письмо =====
+                        self.save_debug_email(email_id_str, from_addr, subject, body, "empty_question")
+                        
+                        # Не удаляем письмо, а перемещаем в папку ошибок
+                        error_folder = self.config.get('error_folder', 'Errors')
+                        try:
+                            self.imap.create(error_folder)
+                            self.imap.copy(email_id, error_folder)
+                            self.imap.store(email_id, '+FLAGS', '\\Seen')
+                            self.logger.debug(f"   📁 Письмо перемещено в '{error_folder}'")
+                        except Exception as e:
+                            self.logger.error(f"   ❌ Ошибка перемещения: {e}")
+                        
+                        continue
                     
                     # Проверяем фильтры
                     passes, reason = self.passes_filters(subject, from_addr, body)
                     
+                    # ===== ДИАГНОСТИКА: результат фильтрации =====
+                    self.logger.debug(f"   🔍 Фильтры: {'✅ ПРОШЕЛ' if passes else '❌ НЕ ПРОШЕЛ'} - {reason}")
+                    
+                    # ===== ДИАГНОСТИКА: сохраняем отфильтрованные письма =====
                     if not passes:
                         filtered_count += 1
                         self.logger.email_processed(from_addr, subject, "FILTERED", reason)
-                        self.logger.debug(f"   ⏭️  Письмо ОТФИЛЬТРОВАНО: {reason}")
                         
-                        if self.config.get('mark_as_read', True):
-                            self.imap.store(email_id, '+FLAGS', '\\Seen')
+                        # Сохраняем информацию об отфильтрованном письме
+                        self.save_debug_email(email_id_str, from_addr, subject, body, f"filtered_{reason[:30]}")
                         
-                        filtered_folder = self.config.get('filtered_folder')
-                        if filtered_folder:
-                            try:
-                                self.imap.create(filtered_folder)
-                                self.imap.copy(email_id, filtered_folder)
-                                if self.config.get('delete_after_filtering', False):
-                                    self.imap.store(email_id, '+FLAGS', '\\Deleted')
-                                self.logger.debug(f"   📁 Письмо перемещено в '{filtered_folder}'")
-                            except Exception as e:
-                                self.logger.debug(f"   ⚠️  Ошибка перемещения: {e}")
+                        # ===== ВАЖНО: НЕ ПОМЕЧАЕМ КАК ПРОЧИТАННОЕ =====
+                        # Просто перемещаем в Filtered, но оставляем непрочитанным
+                        # Это позволит увидеть их в папке Filtered как непрочитанные
+                        
+                        filtered_folder = self.config.get('filtered_folder', 'Filtered')
+                        try:
+                            self.imap.create(filtered_folder)
+                            self.imap.copy(email_id, filtered_folder)
+                            # НЕ помечаем как прочитанное!
+                            # self.imap.store(email_id, '+FLAGS', '\\Seen')  # <-- УБРАТЬ
+                            
+                            if self.config.get('delete_after_filtering', False):
+                                self.imap.store(email_id, '+FLAGS', '\\Deleted')
+                            
+                            self.logger.debug(f"   📁 Письмо перемещено в '{filtered_folder}' (НЕ прочитано)")
+                        except Exception as e:
+                            self.logger.error(f"   ❌ Ошибка перемещения: {e}")
                         
                         continue
                     
+                    # Письмо прошло фильтры
                     self.logger.email_processed(from_addr, subject, "PROCESSED")
                     question_display = question[:50] + "..." if len(question) > 50 else question
                     self.logger.debug(f"✅ Письмо ПРОШЛО фильтры. Вопрос: '{question_display}'")
                     
                     emails.append({
-                        'id': email_id.decode() if isinstance(email_id, bytes) else str(email_id),
+                        'id': email_id_str,
                         'subject': subject,
                         'from': from_addr,
                         'date': date,
@@ -392,16 +458,26 @@ class EmailReader:
                         'raw_message': msg
                     })
                     
+                    # Помечаем как прочитанное ТОЛЬКО после успешной обработки
                     if self.config.get('mark_as_read', True):
                         self.imap.store(email_id, '+FLAGS', '\\Seen')
                     
+                    # ===== ДИАГНОСТИКА: успешно обработано =====
+                    self.save_debug_email(email_id_str, from_addr, subject, body, "processed")
+                    
                 except socket.timeout:
-                    self.logger.error(f"⏰ Таймаут при обработке письма {email_id}")
+                    self.logger.error(f"⏰ Таймаут при обработке письма {email_id_str}")
                     error_count += 1
+                    self.save_debug_email(email_id_str, "unknown", "TIMEOUT", "", "timeout")
                     continue
                 except Exception as e:
                     error_count += 1
-                    self.logger.error(f"Ошибка обработки письма {email_id}: {e}")
+                    self.logger.error(f"❌ Ошибка обработки письма {email_id_str}: {e}")
+                    import traceback
+                    self.logger.debug(traceback.format_exc())
+                    
+                    # ===== ДИАГНОСТИКА: сохраняем ошибку =====
+                    self.save_debug_email(email_id_str, "unknown", f"ERROR: {str(e)[:50]}", "", "error")
                     continue
             
         except socket.timeout:
@@ -411,9 +487,19 @@ class EmailReader:
             return []
         except Exception as e:
             self.logger.error(f"❌ Ошибка получения писем: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
             return []
         
-        self.logger.info(f"📊 Статистика: Всего {total_count} | Обработано {len(emails)} | Отфильтровано {filtered_count} | Ошибок {error_count}")
+        # ===== ДИАГНОСТИКА: итоговый отчет =====
+        self.logger.info(f"📊 СТАТИСТИКА ОБРАБОТКИ:")
+        self.logger.info(f"   Всего писем: {total_count}")
+        self.logger.info(f"   Обработано: {len(emails)}")
+        self.logger.info(f"   Отфильтровано: {filtered_count}")
+        self.logger.info(f"   Ошибок: {error_count}")
+        
+        # Сохраняем диагностику
+        self.save_diagnostics(total_count, len(emails), filtered_count, error_count)
         
         return emails
     
@@ -471,3 +557,87 @@ class EmailReader:
         except Exception as e:
             self.logger.error(f"❌ Ошибка: {e}")
             return False
+
+    def log_folder_status(self):
+        """Логирование статуса всех папок"""
+        try:
+            # Получаем список всех папок
+            status, folders = self.imap.list()
+            if status == 'OK':
+                self.logger.debug("📁 СТАТУС ПАПОК:")
+                for folder in folders:
+                    folder_name = folder.decode().split('"/"')[-1].strip('"')
+                    try:
+                        self.imap.select(folder_name)
+                        status, count = self.imap.status(folder_name, '(MESSAGES UNSEEN)')
+                        if status == 'OK':
+                            # Парсим количество
+                            import re
+                            match = re.search(r'MESSAGES\s+(\d+)', count[0].decode())
+                            total = match.group(1) if match else '?'
+                            match_unseen = re.search(r'UNSEEN\s+(\d+)', count[0].decode())
+                            unseen = match_unseen.group(1) if match_unseen else '?'
+                            self.logger.debug(f"   {folder_name}: всего={total}, непрочитанных={unseen}")
+                    except:
+                        pass
+        except Exception as e:
+            self.logger.debug(f"   ⚠️ Ошибка получения статуса папок: {e}")
+
+    def check_all_emails_count(self):
+        """Проверка общего количества писем в INBOX"""
+        try:
+            status, messages = self.imap.search(None, 'ALL')
+            if status == 'OK' and messages[0]:
+                total = len(messages[0].split())
+                self.logger.debug(f"📊 Всего писем в INBOX: {total}")
+                
+                # Проверяем прочитанные/непрочитанные
+                status, unseen = self.imap.search(None, 'UNSEEN')
+                unseen_count = len(unseen[0].split()) if unseen and unseen[0] else 0
+                self.logger.debug(f"   Непрочитанных: {unseen_count}")
+                self.logger.debug(f"   Прочитанных: {total - unseen_count}")
+        except Exception as e:
+            self.logger.debug(f"   ⚠️ Ошибка подсчета: {e}")
+
+    def save_debug_email(self, email_id: str, from_addr: str, subject: str, body: str, reason: str):
+        """Сохранение письма для диагностики"""
+        try:
+            debug_dir = Path("logs/debug_emails")
+            debug_dir.mkdir(exist_ok=True, parents=True)
+            
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safe_id = email_id.replace('/', '_')[:20]
+            filename = f"{timestamp}_{safe_id}_{reason[:30]}.txt"
+            
+            with open(debug_dir / filename, 'w', encoding='utf-8') as f:
+                f.write(f"Email ID: {email_id}\n")
+                f.write(f"From: {from_addr}\n")
+                f.write(f"Subject: {subject}\n")
+                f.write(f"Reason: {reason}\n")
+                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                f.write("="*70 + "\n")
+                f.write("BODY:\n")
+                f.write("="*70 + "\n")
+                f.write(body[:2000] if body else "(empty)")
+                f.write("\n" + "="*70 + "\n")
+            
+            self.logger.debug(f"   💾 Сохранено в debug_emails/{filename}")
+        except Exception as e:
+            self.logger.debug(f"   ⚠️ Ошибка сохранения: {e}")
+
+    def save_diagnostics(self, total, processed, filtered, errors):
+        """Сохранение диагностики в JSON"""
+        try:
+            self.diagnostics['last_check'] = datetime.now().isoformat()
+            self.diagnostics['total_emails'] = total
+            self.diagnostics['processed'] = processed
+            self.diagnostics['filtered'] = filtered
+            self.diagnostics['errors'] = errors
+            
+            # Сохраняем в файл
+            with open(self.debug_file, 'w', encoding='utf-8') as f:
+                json.dump(self.diagnostics, f, ensure_ascii=False, indent=2)
+            
+            self.logger.debug(f"💾 Диагностика сохранена в {self.debug_file}")
+        except Exception as e:
+            self.logger.debug(f"⚠️ Ошибка сохранения диагностики: {e}")            
