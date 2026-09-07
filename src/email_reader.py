@@ -322,14 +322,14 @@ class EmailReader:
             self.disconnect()
             if not self.connect():
                 return []
-            
+
         emails = []
         filtered_count = 0
         error_count = 0
         total_count = 0
         
         # ===== ДИАГНОСТИКА: логируем состояние папок =====
-        self.log_folder_status()
+        #self.log_folder_status()
         
         try:
             socket.setdefaulttimeout(30)
