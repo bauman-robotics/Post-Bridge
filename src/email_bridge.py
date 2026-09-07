@@ -36,6 +36,7 @@ class EmailBridge:
     """Основной класс-оркестратор"""
     
     def __init__(self, config_path: str = "config/config.yaml", secrets_path: str = "config/secrets.yaml"):
+        print('__init__', flush=True) 
         """Инициализация с загрузкой конфига и секретов"""
         self.config = self.load_config(config_path, secrets_path)
         self.running = True
@@ -1397,6 +1398,10 @@ class EmailBridge:
 
 def main():
     """Точка входа"""
+
+    print("🔍 DEBUG: main() STARTED", flush=True)
+    print(f"🔍 DEBUG: sys.argv = {sys.argv}", flush=True)
+
     if len(sys.argv) > 1 and sys.argv[1] == '--help':
         print("""
         Использование: python src/email_bridge.py [опции]
@@ -1435,3 +1440,6 @@ def main():
             bridge.run_forever()
     else:
         bridge.run_forever()
+
+if __name__ == "__main__":
+    main()        
