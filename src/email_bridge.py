@@ -36,17 +36,24 @@ class EmailBridge:
     """Основной класс-оркестратор"""
     
     def __init__(self, config_path: str = "config/config.yaml", secrets_path: str = "config/secrets.yaml"):
+        """Инициализация с загрузкой конфига и секретов"""
         self.config = self.load_config(config_path, secrets_path)
         self.running = True
+        
+        # Инициализируем логгер
         self.logger = get_logger()
+        
+        # Загружаем сохраненные сессии (сначала создаем путь)
+        self.sessions_file = Path("data/sessions.json")
+        self.sessions_file.parent.mkdir(exist_ok=True, parents=True)
         self.sessions = self.load_sessions()
         
-        # Инициализируем компоненты СНАЧАЛА
+        # Инициализируем компоненты
         self.deepseek = DeepSeekClient(self.config.get('deepseek', {}))
         self.email_reader = EmailReader(self.config.get('email', {}))
         self.email_sender = EmailSender(self.config.get('email', {}))
         
-        # Потом выводим конфигурацию
+        # Выводим конфигурацию при старте (ТЕПЕРЬ все компоненты есть)
         self.print_config()
         
         # Настройка обработки сигналов
