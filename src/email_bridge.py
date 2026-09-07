@@ -1213,21 +1213,43 @@ class EmailBridge:
         
     def run_forever(self):
         """Бесконечный цикл с выбором режима ожидания"""
-        general = self.config.get('general', {})
-        wait_mode = general.get('email_wait_mode', 'polling')
+        print("🔍 DEBUG: run_forever STARTED", flush=True)
         
-        print("🚀 Запуск почтового моста")
-        print(f"📧 Почта: {self.config.get('email', {}).get('username', '')}")
-        print(f"🤖 Модель: {self.config.get('deepseek', {}).get('model', 'deepseek-chat')}")
-        print(f"📡 Режим ожидания: {wait_mode}")
-        print("="*50)
-        
-        if wait_mode == 'idle':
-            self._run_idle_mode()
-        elif wait_mode == 'hybrid':
-            self._run_hybrid_mode()
-        else:
-            self._run_polling_mode()
+        try:
+            print("🔍 DEBUG: Получение general config...", flush=True)
+            general = self.config.get('general', {})
+            print(f"🔍 DEBUG: general = {general}", flush=True)
+            
+            print("🔍 DEBUG: Получение wait_mode...", flush=True)
+            wait_mode = general.get('email_wait_mode', 'polling')
+            print(f"🔍 DEBUG: wait_mode = {wait_mode}", flush=True)
+            
+            print("🔍 DEBUG: Вывод информации...", flush=True)
+            print("🚀 Запуск почтового моста")
+            print(f"📧 Почта: {self.config.get('email', {}).get('username', '')}")
+            print(f"🤖 Модель: {self.config.get('deepseek', {}).get('model', 'deepseek-chat')}")
+            print(f"📡 Режим ожидания: {wait_mode}")
+            print("="*50)
+            
+            print(f"🔍 DEBUG: wait_mode = {wait_mode}, вызываем режим...", flush=True)
+            
+            if wait_mode == 'idle':
+                print("🔍 DEBUG: Вызов _run_idle_mode()", flush=True)
+                self._run_idle_mode()
+            elif wait_mode == 'hybrid':
+                print("🔍 DEBUG: Вызов _run_hybrid_mode()", flush=True)
+                self._run_hybrid_mode()
+            else:
+                print("🔍 DEBUG: Вызов _run_polling_mode()", flush=True)
+                self._run_polling_mode()
+                
+            print("🔍 DEBUG: run_forever FINISHED (не должно быть видно)", flush=True)
+            
+        except Exception as e:
+            print(f"🔍 DEBUG: ОШИБКА в run_forever: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            raise
 
     def check_missing_emails(self):
         """Проверка потерянных писем"""
