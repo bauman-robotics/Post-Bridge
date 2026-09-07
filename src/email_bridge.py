@@ -455,14 +455,14 @@ class EmailBridge:
         print("✅ Почтовый мост запущен!")
         print("="*70 + "\n")
         
-        # ===== ПРОВЕРКА ПАПОК ПРИ СТАРТЕ (синхронно) =====
-        if self.config.get('general', {}).get('enable_email_processing', True):
-            try:
-                if self.email_reader and self.email_reader.connect():
-                    self.check_missing_emails()
-                    self.email_reader.disconnect()
-            except Exception as e:
-                self.logger.debug(f"Проверка папок при старте: {e}")
+        # # ===== ПРОВЕРКА ПАПОК ПРИ СТАРТЕ (синхронно) =====
+        # if self.config.get('general', {}).get('enable_email_processing', True):
+        #     try:
+        #         if self.email_reader and self.email_reader.connect():
+        #             self.check_missing_emails()
+        #             self.email_reader.disconnect()
+        #     except Exception as e:
+        #         self.logger.debug(f"Проверка папок при старте: {e}")
 
         # Записываем в лог
         self.logger.info("="*70)
