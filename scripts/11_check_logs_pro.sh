@@ -166,11 +166,11 @@ check_loss_statistics() {
     echo -e "  ${RED}❌ Ошибок:${NC} $total_errors"
     
     # Процент потерь
-    if [ $total_found -gt 0 ]; then
+    if [[ -n "$total_found" && "$total_found" -gt 0 ]]; then
         local loss_rate=$(( (total_found - total_processed) * 100 / total_found ))
-        if [ $loss_rate -gt 50 ]; then
+        if [[ "$loss_rate" -gt 50 ]]; then
             echo -e "  ${RED}⚠️  ВЫСОКИЙ УРОВЕНЬ ПОТЕРЬ: ${loss_rate}%${NC}"
-        elif [ $loss_rate -gt 20 ]; then
+        elif [[ "$loss_rate" -gt 20 ]]; then
             echo -e "  ${YELLOW}⚠️  СРЕДНИЙ УРОВЕНЬ ПОТЕРЬ: ${loss_rate}%${NC}"
         else
             echo -e "  ${GREEN}✅ НИЗКИЙ УРОВЕНЬ ПОТЕРЬ: ${loss_rate}%${NC}"
@@ -185,18 +185,25 @@ check_loss_statistics() {
 check_imap_folders() {
     echo -e "${BLUE}Статус папок почтового ящика:${NC}"
     
-    # Пытаемся подключиться и проверить через python скрипт
-    local check_script=$(cat <<'EOF'
+    # Проверяем через python с таймаутом
+    cd "$PROJECT_DIR" 2>/dev/null
+    python3 <<'EOF' 2>/dev/null
 import sys
 import yaml
 import imaplib
-from pathlib import Path
+import socket
+import signal
+
+# Таймаут на всё
+signal.signal(signal.SIGALRM, lambda x, y: sys.exit(1))
+signal.alarm(10)
 
 try:
     with open('config/secrets.yaml', 'r') as f:
         secrets = yaml.safe_load(f)
     
     email_config = secrets.get('email', {})
+    socket.setdefaulttimeout(10)
     
     imap = imaplib.IMAP4_SSL(email_config.get('imap_server', 'imap.yandex.ru'))
     imap.login(email_config['username'], email_config['password'])
@@ -212,23 +219,16 @@ try:
                 status, unseen = imap.search(None, 'UNSEEN')
                 unseen_count = len(unseen[0].split()) if unseen and unseen[0] else 0
                 print(f"  📁 {folder}: {total} писем (непрочитанных: {unseen_count})")
-            else:
-                print(f"  ❌ {folder}: не доступна")
-        except Exception as e:
-            print(f"  ⚠️ {folder}: ошибка - {str(e)[:30]}")
+        except Exception:
+            pass
     
     imap.close()
     imap.logout()
     
-except Exception as e:
-    print(f"  ❌ Ошибка подключения: {str(e)[:50]}")
+except Exception:
+    pass
 EOF
-)
-    
-    # Запускаем скрипт из папки проекта
-    cd "$PROJECT_DIR" 2>/dev/null
-    python3 -c "$check_script" 2>/dev/null || echo "  ⚠️ Не удалось проверить папки (ошибка IMAP)"
-    cd - > /dev/null 2>&1
+    cd - > /dev/null 2>&1 || true
 }
 
 # ============================================
@@ -325,7 +325,7 @@ check_logs() {
     # Проверяем наличие писем в Filtered
     if [ -f "$LOG_DIR/email_diagnostics.json" ]; then
         FILTERED_COUNT=$(grep -o '"filtered":[0-9]*' "$LOG_DIR/email_diagnostics.json" 2>/dev/null | cut -d: -f2 | tail -1)
-        if [ -n "$FILTERED_COUNT" ] && [ "$FILTERED_COUNT" -gt 0 ]; then
+        if [ -n "$FILTERED_COUNT" ] && [ "$FILTERED_COUNT" -gt 0 ] 2>/dev/null; then
             echo -e "  ${YELLOW}⚠️ Обнаружено $FILTERED_COUNT отфильтрованных писем${NC}"
             echo "   Для восстановления выполните:"
             echo "     python src/email_bridge.py --recover"
