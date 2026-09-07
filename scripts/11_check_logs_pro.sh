@@ -148,15 +148,21 @@ check_loss_statistics() {
         return
     fi
     
-    # Считаем события за последние 24 часа
-    local since=$(date -d '24 hours ago' '+%Y-%m-%d %H:%M:%S')
+    # Считаем события (очищаем от лишних пробелов и переводов строк)
+    local total_checks=$(grep -c "Проверка почты" "$log_file" 2>/dev/null | tr -d '\n\r ' || echo "0")
+    local total_found=$(grep -c "Найдено новых писем" "$log_file" 2>/dev/null | tr -d '\n\r ' || echo "0")
+    local total_empty=$(grep -c "Новых писем нет" "$log_file" 2>/dev/null | tr -d '\n\r ' || echo "0")
+    local total_filtered=$(grep -c "FILTERED" "$log_file" 2>/dev/null | tr -d '\n\r ' || echo "0")
+    local total_processed=$(grep -c "✅ Получен ответ" "$log_file" 2>/dev/null | tr -d '\n\r ' || echo "0")
+    local total_errors=$(grep -c "ERROR" "$log_file" 2>/dev/null | tr -d '\n\r ' || echo "0")
     
-    local total_checks=$(grep -c "Проверка почты" "$log_file" 2>/dev/null || echo "0")
-    local total_found=$(grep -c "Найдено новых писем" "$log_file" 2>/dev/null || echo "0")
-    local total_empty=$(grep -c "Новых писем нет" "$log_file" 2>/dev/null || echo "0")
-    local total_filtered=$(grep -c "FILTERED" "$log_file" 2>/dev/null || echo "0")
-    local total_processed=$(grep -c "✅ Получен ответ" "$log_file" 2>/dev/null || echo "0")
-    local total_errors=$(grep -c "ERROR" "$log_file" 2>/dev/null || echo "0")
+    # Приводим к числам
+    total_checks=${total_checks:-0}
+    total_found=${total_found:-0}
+    total_empty=${total_empty:-0}
+    total_filtered=${total_filtered:-0}
+    total_processed=${total_processed:-0}
+    total_errors=${total_errors:-0}
     
     echo -e "  ${CYAN}📊 Всего проверок:${NC} $total_checks"
     echo -e "  ${GREEN}📨 Найдено писем:${NC} $total_found"
@@ -165,12 +171,12 @@ check_loss_statistics() {
     echo -e "  ${GREEN}✅ Обработано:${NC} $total_processed"
     echo -e "  ${RED}❌ Ошибок:${NC} $total_errors"
     
-    # Процент потерь
-    if [[ -n "$total_found" && "$total_found" -gt 0 ]]; then
+    # Процент потерь (только если total_found > 0)
+    if [ "$total_found" -gt 0 ] 2>/dev/null; then
         local loss_rate=$(( (total_found - total_processed) * 100 / total_found ))
-        if [[ "$loss_rate" -gt 50 ]]; then
+        if [ "$loss_rate" -gt 50 ] 2>/dev/null; then
             echo -e "  ${RED}⚠️  ВЫСОКИЙ УРОВЕНЬ ПОТЕРЬ: ${loss_rate}%${NC}"
-        elif [[ "$loss_rate" -gt 20 ]]; then
+        elif [ "$loss_rate" -gt 20 ] 2>/dev/null; then
             echo -e "  ${YELLOW}⚠️  СРЕДНИЙ УРОВЕНЬ ПОТЕРЬ: ${loss_rate}%${NC}"
         else
             echo -e "  ${GREEN}✅ НИЗКИЙ УРОВЕНЬ ПОТЕРЬ: ${loss_rate}%${NC}"
