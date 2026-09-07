@@ -314,6 +314,15 @@ class EmailReader:
         if not self.imap and not self.connect():
             return []
         
+        # Проверяем соединение
+        try:
+            self.imap.noop()
+        except:
+            self.logger.warning("⚠️ Соединение потеряно, переподключаюсь...")
+            self.disconnect()
+            if not self.connect():
+                return []
+            
         emails = []
         filtered_count = 0
         error_count = 0
@@ -507,7 +516,28 @@ class EmailReader:
         if not self.imap:
             return
         try:
-            self.imap.create(folder)
+            # Проверяем соединение
+            try:
+                self.imap.noop()
+            except:
+                self.logger.warning(f"Соединение потеряно, переподключаюсь...")
+                self.connect()
+                if not self.imap:
+                    return
+            
+            # Проверяем существование папки
+            try:
+                self.imap.select(folder)
+            except:
+                # Папка не существует, создаем
+                try:
+                    self.imap.create(folder)
+                    self.logger.debug(f"📁 Создана папка '{folder}'")
+                except Exception as e:
+                    self.logger.warning(f"Не удалось создать папку '{folder}': {e}")
+                    return
+            
+            # Копируем письмо
             self.imap.copy(email_id, folder)
             if self.config.get('delete_after_processing', False):
                 self.imap.store(email_id, '+FLAGS', '\\Deleted')
@@ -566,20 +596,29 @@ class EmailReader:
             if status == 'OK':
                 self.logger.debug("📁 СТАТУС ПАПОК:")
                 for folder in folders:
-                    folder_name = folder.decode().split('"/"')[-1].strip('"')
                     try:
-                        self.imap.select(folder_name)
-                        status, count = self.imap.status(folder_name, '(MESSAGES UNSEEN)')
-                        if status == 'OK':
-                            # Парсим количество
-                            import re
-                            match = re.search(r'MESSAGES\s+(\d+)', count[0].decode())
-                            total = match.group(1) if match else '?'
-                            match_unseen = re.search(r'UNSEEN\s+(\d+)', count[0].decode())
-                            unseen = match_unseen.group(1) if match_unseen else '?'
-                            self.logger.debug(f"   {folder_name}: всего={total}, непрочитанных={unseen}")
-                    except:
+                        # Извлекаем имя папки
+                        folder_name = folder.decode().split('"/"')[-1].strip('"')
+                        # Пробуем выбрать папку
+                        try:
+                            select_status = self.imap.select(folder_name)
+                            if select_status[0] == 'OK':
+                                status, count = self.imap.status(folder_name, '(MESSAGES UNSEEN)')
+                                if status == 'OK':
+                                    import re
+                                    match = re.search(r'MESSAGES\s+(\d+)', count[0].decode())
+                                    total = match.group(1) if match else '?'
+                                    match_unseen = re.search(r'UNSEEN\s+(\d+)', count[0].decode())
+                                    unseen = match_unseen.group(1) if match_unseen else '?'
+                                    self.logger.debug(f"   {folder_name}: всего={total}, непрочитанных={unseen}")
+                            else:
+                                self.logger.debug(f"   {folder_name}: не удалось выбрать")
+                        except Exception as e:
+                            self.logger.debug(f"   {folder_name}: ошибка - {str(e)[:30]}")
+                    except Exception as e:
                         pass
+            else:
+                self.logger.debug("   ⚠️ Не удалось получить список папок")
         except Exception as e:
             self.logger.debug(f"   ⚠️ Ошибка получения статуса папок: {e}")
 
